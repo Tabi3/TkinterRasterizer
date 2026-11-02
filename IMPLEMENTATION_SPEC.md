@@ -207,7 +207,7 @@ $w_{clip} = -z_{view} > 0$.
 
 For a view-space point $(x, y, z)$, perspective projection is:
 
-$$
+\[
 
 n_x = \frac{x}{-z} \cdot \frac{f}{aspect}, \quad
 n_y = \frac{y}{-z} \cdot f,
@@ -216,27 +216,25 @@ w_{clip} = -z,
 \quad
 z_{clip} = near,
 
-$$
+\]
 
 with $f = 1 / \tan(\theta_{fov}/2)$ for perspective projection. The result is
 then converted to NDC with:
 
-$$
+\[
 
 x_{ndc} = \frac{x_{clip}}{w_{clip}}, \quad
 y_{ndc} = \frac{y_{clip}}{w_{clip}}, \quad
 z_{ndc} = \frac{z_{clip}}{w_{clip}}.
 
-$$
+\]
 
 Because reverse-Z stores the near plane as 1 and the far plane as 0, the depth
 comparison is simply:
 
-$$
-
+\[
 z_{new} > z_{depth}[px, py].
-
-$$
+\]
 
 This is the exact mirror of the standard depth test in forward-Z pipelines and
 makes the clear value equal to 0.0 while preserving the rule that closer objects
@@ -247,11 +245,9 @@ win.
 For a triangle with screen-space vertices $p_0, p_1, p_2$, the edge function for
 edge $e_i$ is defined as:
 
-$$
-
+\[
 E_i(x, y) = a_i x + b_i y + c_i,
-
-$$
+\]
 
 where the constants are derived from the two vertices that define the edge. A
 point lies inside the triangle if and only if all three edge tests evaluate as
@@ -260,13 +256,13 @@ positive under the chosen winding convention. The renderer uses the standard
 
 This yields a scanline loop of the form:
 
-$$
+\[
 
 E_i(p + \Delta x) = E_i(p) + a_i,
 \quad
 E_i(p + \Delta y) = E_i(p) + b_i,
 
-$$
+\]
 
 which means the inner loop is dominated by additions rather than expensive
 recalculation of the full edge equation at every pixel. In practice this is the
@@ -278,19 +274,15 @@ multiply-heavy per-pixel setup.
 Let $iw_i = 1 / w_{clip,i}$ and let $E_i(p)$ be the triangle edge function for the
 vertex opposite $i$. The barycentric weight for vertex $i$ is:
 
-$$
-
+\[
 \lambda_i(p) = \frac{E_i(p)}{A}, \quad A = \sum_i E_i(p).
-
-$$
+\]
 
 The correct perspective-correct interpolant for varying data is:
 
-$$
-
+\[
 v_k(p) = \frac{\sum_i E_i(p)\, v_i[k] \, iw_i}{\sum_i E_i(p) \, iw_i}.
-
-$$
+\]
 
 This is why the rasterizer stores a per-vertex inverse-w value and computes the
 weighted varying numerator and denominator in the same screen-space span loop. The
@@ -302,21 +294,17 @@ a costly division per varying channel.
 The depth buffer stores the NDC depth value; for a triangle, the screen-space
 linear depth is:
 
-$$
-
+\[
 z_{ndc}(p) = \sum_i \lambda_i(p) z_i.
-
-$$
+\]
 
 Because the depth is affine in barycentric coordinates, the rasterizer can update
 it incrementally across a scanline using the same edge-function evaluation scheme.
 The reverse-Z convention preserves the common rule:
 
-$$
-
+\[
 \text{write if } z_{new} > z_{stored},
-
-$$
+\]
 
 so the final visible surface is the one with the greatest depth in the reverse-Z
 space, which corresponds to the nearest object in view space.
@@ -326,19 +314,15 @@ space, which corresponds to the nearest object in view space.
 The shader pipeline takes a world-space normal $\hat{n}$ and a light direction
 $\hat{l}$ and evaluates the diffuse term:
 
-$$
-
+\[
 d = \max(0, \hat{n} \cdot \hat{l}).
-
-$$
+\]
 
 The per-light contribution is then:
 
-$$
-
+\[
 \text{shade}_k = ambient_k + d \cdot light_k,
-
-$$
+\]
 
 with the color channel being multiplied by the sampled texture value when a
 textured shader is active. This makes the lighting model a low-cost linear
