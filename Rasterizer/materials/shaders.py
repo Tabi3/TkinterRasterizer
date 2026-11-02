@@ -45,10 +45,11 @@ def make_gouraud_shader(light_color=(1.0, 0.95, 0.85), ambient=0.15):
         n = vertex.normal
 
         if n is not None:
-            # World-space normal (upper-left 3x3; valid for rotation + uniform scale).
-            nx = m[0] * n.x + m[1] * n.y + m[2] * n.z
-            ny = m[4] * n.x + m[5] * n.y + m[6] * n.z
-            nz = m[8] * n.x + m[9] * n.y + m[10] * n.z
+            # World-space inverse-transpose normal, cached once per model.
+            normal = u.normal_matrix.data
+            nx = normal[0] * n.x + normal[1] * n.y + normal[2] * n.z
+            ny = normal[3] * n.x + normal[4] * n.y + normal[5] * n.z
+            nz = normal[6] * n.x + normal[7] * n.y + normal[8] * n.z
             nl = (nx * nx + ny * ny + nz * nz) ** 0.5
             if nl > 0.0:
                 inv = 1.0 / nl
@@ -92,7 +93,7 @@ def make_gouraud_shader(light_color=(1.0, 0.95, 0.85), ambient=0.15):
                     if dist2 > radius * radius:
                         continue
                     dist = dist2**0.5
-                    inv_d = 1.0 / dist
+                    inv_d = 1.0 / dist if dist > 0.0 else 0.0
                     d = (nx * dx + ny * dy + nz * dz) * inv_d
                     d *= 1.0 - dist / radius  # linear falloff
                 d = max(d, 0.0)
@@ -165,7 +166,7 @@ def make_textured_lit_shader(texture):
     Varyings: (u, v, r, g, b) — three lighting channels, each pre-clamped
     to [0, 1] in the vertex shader, so the fragment stage needs no clamp.
     """
-    tex_data = list(texture.data)  # list reads are ~2-3x faster than array
+    tex_data = texture.data  # retain live texture data, matching unlit sampling
     tw, th = texture.width, texture.height
     tw1, th1 = tw - 1, th - 1
     repeat = texture.wrap == "repeat"
@@ -175,10 +176,11 @@ def make_textured_lit_shader(texture):
         m = u.model.data
         n = vertex.normal
         if n is not None:
-            # World-space normal (upper-left 3x3; valid for rotation + uniform scale).
-            nx = m[0] * n.x + m[1] * n.y + m[2] * n.z
-            ny = m[4] * n.x + m[5] * n.y + m[6] * n.z
-            nz = m[8] * n.x + m[9] * n.y + m[10] * n.z
+            # World-space inverse-transpose normal, cached once per model.
+            normal = u.normal_matrix.data
+            nx = normal[0] * n.x + normal[1] * n.y + normal[2] * n.z
+            ny = normal[3] * n.x + normal[4] * n.y + normal[5] * n.z
+            nz = normal[6] * n.x + normal[7] * n.y + normal[8] * n.z
             nl = (nx * nx + ny * ny + nz * nz) ** 0.5
             if nl > 0.0:
                 inv = 1.0 / nl

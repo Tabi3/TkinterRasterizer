@@ -10,15 +10,14 @@ Reference:
 """
 
 import sys
-import time
 
 try:
-    from .common import parse_resolution
+    from .common import advance_time, parse_resolution
 except ImportError:  # pragma: no cover - package import fallback
     try:
-        from common import parse_resolution
+        from common import advance_time, parse_resolution
     except ImportError:  # pragma: no cover - direct repo launch fallback
-        from Rasterizer.demos.common import parse_resolution
+        from Rasterizer.demos.common import advance_time, parse_resolution
 
 from Rasterizer.algebra.math3d import Vec3
 from Rasterizer.algebra.transforms import rotate_x, rotate_y
@@ -34,6 +33,7 @@ _state = {}
 
 
 def draw(fb, dt):
+    t = advance_time(_state, dt)
     if "renderer" not in _state:
         _state["renderer"] = Renderer(fb.width, fb.height)
         tex = Texture.checkerboard(
@@ -54,9 +54,9 @@ def draw(fb, dt):
         ]
         _state["uniforms"] = u
 
-    t = time.perf_counter()
     _state["root"].children[0].local_transform = rotate_y(t * 0.6) @ rotate_x(t * 0.3)
     _state["uniforms"].time = t
+    _state["uniforms"].delta_time = dt
 
     renderer = _state["renderer"]
     renderer.draw_skybox(fb, 0x5060A0, 0x203040)

@@ -7,7 +7,7 @@ with clip-space vertices c_i = (x_i, y_i, z_i, w_i), it computes the set of
 integer pixels P = {(px, py)} whose centers (px+0.5, py+0.5) lie inside the
 triangle in screen space, subject to the reverse-Z depth test:
 
-    z_ndc(px, py) > depth[py, px]   =>  write color, update depth
+    z_ndc(px, py) > depth[py, px]   =>  write color, optionally update depth
 
 where z_ndc is affine in screen-space barycentric weights (derived below).
 
@@ -33,8 +33,9 @@ than allocating math objects in the inner loop.
 The stage contracts are:
 
 - Vertex shader: vs(vertex, u) → (c ∈ ℝ⁴ clip, v ∈ ℝⁿ varyings)
-- Clipping: cuts triangle edges at w_clip = near, preserving v by linear
-  clip-space lerp (correct because clip space is a linear embedding of ℝ³).
+- Clipping: perspective cuts at `w_clip = near`; orthographic cuts at
+  `z_clip = w_clip` (near) and `z_clip = 0` (far). One shared polygon
+  clipper interpolates positions and varyings at the same intersections.
 - Rasterizer: fills pixels satisfying edge tests, interpolates v by
   perspective correction, calls fs(v) → 0xRRGGBB.
 
@@ -42,8 +43,14 @@ The stage contracts are:
 
 - Column-vector math: (M · v)_i = Σ_j M[i, j] · v_j. Mat4 storage is
   row-major flat, M[i, j] = data[i·4 + j].
-- Clip space: w_clip > 0 for all visible geometry. w_clip = -Z_view for all
-  projections. Therefore the near-plane test is w_clip ≥ near.
+- Perspective clip space: `w_clip = -Z_view`, `z_clip = near`. Preserve x/y
+  even for vertices behind the eye so homogeneous clipping finds correct edges.
+- Orthographic clip space: `w_clip = 1`, `z_clip = (far + Z_view)/(far - near)`.
+  Attributes and depth interpolate affinely in screen space. `Camera.far`
+  defaults to 1000 world units and affects orthographic rendering only.
+- Panini/ellipsoid: use `w_clip = -Z_view`, `z_clip = near`. Filled triangles
+  approximate curved projected surfaces with straight chords; their clipping
+  and attribute interpolation are approximations, especially near the eye.
 - NDC: (x_ndc, y_ndc, z_ndc) = (x_clip/w_clip, y_clip/w_clip, z_clip/w_clip),
   with z_ndc ∈ [0, 1] reverse-Z: near → 1, far → 0.
 - Depth test: z_ndc_new > depth[px, py]. Reverse-Z means "greater wins".
@@ -58,14 +65,14 @@ The stage contracts are:
 
 The renderer follows the standard right-handed camera convention used by many
 real-time pipelines: the camera looks along the negative Z axis in view space,
-so a visible point satisfies $z_{view} < 0$ and the clip-space denominator is
+so a visible point satisfies $z_{view} < 0$. For perspective the denominator is
 $w_{clip} = -z_{view} > 0$.
 
-For a view-space point $(x, y, z)$, the projection used by the renderer is:
+For a view-space point $(x, y, z)$, perspective projection is:
 
 $$
 
-n_x = \frac{x}{-z} \cdot f, \quad
+n_x = \frac{x}{-z} \cdot \frac{f}{aspect}, \quad
 n_y = \frac{y}{-z} \cdot f,
 \quad
 w_{clip} = -z,
@@ -179,7 +186,7 @@ space, which corresponds to the nearest object in view space.
 
 ### 5. Lighting and shading model
 
-The shader pipeline takes a view-space normal $\hat{n}$ and a light direction
+The shader pipeline takes a world-space normal $\hat{n}$ and a light direction
 $\hat{l}$ and evaluates the diffuse term:
 
 $$
@@ -198,8 +205,10 @@ $$
 
 with the color channel being multiplied by the sampled texture value when a
 textured shader is active. This makes the lighting model a low-cost linear
-function of interpolated surface data and keeps the fragment kernel small enough
-for Python-level control flow.
+function evaluated at vertices; resulting colors are interpolated for Gouraud
+shading. Normals use the cached inverse transpose of the model linear transform,
+so nonuniform scale is supported. Singular transforms produce zero normals
+(ambient only). A coincident point light contributes zero diffuse illumination.
 
 ## Selected references and literature
 
@@ -263,28 +272,129 @@ intentional breaking change is documented.
 - Ruff is configured in `pyproject.toml`. Run `python -m ruff check .` and
   `python -m ruff format --check .` before changing behavior or imports.
 
+## Render state and input contracts
+
+- `Material.cull` and `Material.depth_write` are mutable flags honored by scene
+  and instanced draws. `draw_mesh_shaded(..., *, depth_write=True)` also exposes
+  the latter directly. Disabling depth writes still performs the depth test.
+- `cast_shadow` is reserved metadata; there is no shadow pass or alpha blending.
+- Filled scene traversal rejects bounds entirely before the near plane, with
+  boundary equality visible. Bounds must describe shader-deformed positions if
+  a custom shader moves geometry. Refresh mesh bounds after vertex edits.
+  No side-frustum or occlusion culling is currently implemented.
+- `Uniforms.normal_matrix` lazily caches a `Mat3` inverse transpose keyed by
+  model data. Shader projection callbacks accept homogeneous `Vec4` positions.
+- Both textured shaders observe in-place edits to pixels. Rebuild shaders after
+  changing texture dimensions, wrap mode, or the data object.
+- Camera parameters must be finite: `0 < near < far`, positive ortho scale,
+  `0 < fov_y_deg < 180`, ellipsoid strength in `[0, 1]`. Perspective retains its
+  infinite far plane; finite `far` is used only by orthographic projection.
+- Targets must match renderer dimensions. Empty meshes are supported;
+  out-of-range indices and inconsistent varying lengths are rejected.
+- Shaded screen vertices must be finite with positive inverse w. Coverage and
+  interpolation both sample exactly `(x + 0.5, y + 0.5)`.
+- Nodes reject cycles, detach from the old parent when reparented, and ignore
+  duplicate attachment to the same parent.
+- Wire segments clip in view space before projection. DDA lines clip to the
+  pixel-index rectangle before stepping, bounding offscreen work.
+  `curve_segments` must be a positive integer.
+- Sky gradients put `color_top` in the first row and `color_bottom` in the last;
+  a single-row framebuffer uses the top color. Depth resets to zero.
+
 ## Performance and allocation
 
-The rasterizer uses incrementally stepped edge and depth values, and specializes
-common varying sizes to keep per-pixel work small. The framebuffer uses packed
-arrays and slice operations for bulk clears and nearest-neighbor scaling, so
-those copies run in C rather than through Python pixel loops.
+Common 2-, 3-, and 5-component varyings use scalar numerator and denominator
+increments across each span. Other sizes reuse a private mutable numerator list.
+Each scanline recomputes its start to limit roundoff. Depth is screen-linear;
+only attributes divide by interpolated inverse w.
 
-Prefer scalar locals and built-in operations in measured hot loops. Avoid
-creating temporary vectors, matrices, or closures inside per-pixel work. Reuse
-private mutable scratch storage only when it cannot leak across calls or change
-the public value semantics. Keep Python loops where callbacks or per-pixel
-conditions require them. Measure representative scenes before and after each
-optimization; preserve image output and test coverage.
+Draws group the index iterator with `zip(indices, indices, indices)` instead of
+repeated triangle method calls. Vertex results use a list comprehension. The
+perspective path retains its baked MVP and private mutable viewport scratch.
+Public vector/matrix semantics are unchanged. Framebuffer bulk work uses arrays
+and slices rather than per-pixel Python copies.
+
+Use built-ins, comprehensions, or itertools only where they reduce measured work.
+Avoid temporary math objects in pixel loops. See `PERFORMANCE.md` for timings,
+measurement limits, and the repeatable headless benchmark command.
+
+## Viewer ownership and lifecycle
+
+Tk renders, submits at most one color-only snapshot per tick, and presents
+completed frames. Three reusable snapshots bound allocations. The encoder owns
+a snapshot until encoding completes or fails, then returns it through a queue.
+Depth is neither copied nor consumed by presentation.
+
+The worker reuses one private upscale target, keeps at most two ready frames,
+and replaces the oldest result when full. Submission replaces obsolete queued
+snapshots when capacity is exhausted, reclaiming only buffers that are not being
+encoded. The encoder skips obsolete pending snapshots before starting work; Tk
+presents the newest ready result. Intermediate frames may be discarded without
+losing elapsed simulation time. Tk operations and fallback-file writes stay on
+the main thread. The worker performs no Tk calls.
+
+PNG is preferred; if initialization selects PPM fallback, subsequent frames
+continue using it at display resolution. `Viewer.close()` is idempotent, signals
+the worker, waits up to one second, removes the fallback file, and destroys Tk.
+`run()` closes resources in `finally`. FPS counts successful presentations;
+render, upscale, encode, and upload timings measure separate stages.
+
+## Time, scheduling, and input
+
+- The renderer, geometry, materials, and rasterizer have no frame-rate clock or
+  built-in frame limiter. Draw calls consume the supplied scene state without
+  advancing it. `Uniforms.time` (elapsed seconds) and `Uniforms.delta_time`
+  (seconds since the last update) belong to the caller and default to zero.
+- `Viewer.set_frame_callback(cb)` calls `cb(framebuffer, dt_seconds)` once per
+  render tick. The first delta is zero; later deltas use monotonic start-to-start
+  time and include rendering, encoding contention, event-loop waits, and stalls.
+  Failed or skipped presentation never suppresses callbacks or clamps delta.
+- `Viewer(..., tick_ms=0)` is the default uncapped mode. Tk idle redraws get a
+  turn before queuing the next immediate timer. An explicit positive `tick_ms`
+  requests a minimum start-to-start period; work already spent on the current
+  frame is subtracted before scheduling. It is not an extra post-render sleep.
+  Timer precision and actual rendering/upload costs still determine throughput.
+- Demos advance a shared compensated elapsed-time accumulator using the supplied
+  delta, with rates in radians per second. Zero delta freezes animation; long
+  deltas consume their full duration. Negative/nonfinite deltas are rejected.
+  Animation starts at time zero rather than the process-wide clock epoch.
+- Built-in demo shaders receive both elapsed time and delta in uniforms. Custom
+  applications should multiply continuous velocities by delta, or evaluate
+  animation from explicit elapsed time. There is no physics integration loop.
+- `Viewer.key_presses()` returns ordered new key-down edges, including multiple
+  taps between callbacks. The projection demo processes them in arrival order,
+  so multiple toggles and projection changes retain their meaning at low FPS.
+  `key_was_pressed()` remains the existing boolean convenience query, and
+  `is_key_down()` reports held state. Input history clears after each callback.
+- Diagnostic smoothing uses elapsed seconds rather than a fixed per-frame alpha.
+  Presented FPS remains a throughput metric and never controls simulation time.
 
 ## Validation
+
+`.github/workflows/quality.yml` enforces lint and formatting on pushes and pull
+requests. Its test matrix covers Windows/Linux and Python 3.12/3.14. Install the
+pinned tools from `requirements-dev.txt` locally so editor and CI diagnostics
+agree. Update tool pins deliberately and run all checks when upgrading them.
+CI must check formatting without modifying files; local automatic fixes require
+diff review. Preserve the configured rules rather than adding blanket ignores.
 
 Run the full regression and style checks from the repository root:
 
 ```bash
+python -m pip install -r requirements-dev.txt
 python -m pytest -q
 python -m ruff check .
 python -m ruff format --check .
 ```
 
-The interactive demos additionally need a Python build with Tk support.
+Regression tests include analytical pixel-center values, deterministic random
+flat/shaded comparisons, both windings, varying sizes, orthographic interpolation
+and clipping, material state, normals, empty geometry, bounds, scene cycles,
+and headless viewer ownership/lifecycle checks with actual encoder threads.
+Timing regressions compare identical animation at 7/30/60/144 FPS and irregular
+schedules, including stalls and zero delta. They also check scheduler cost
+compensation, uncapped mode, ordered input, explicit shader time, and latest-frame
+selection under a blocked encoder, without wall-clock speed assertions.
+
+Interactive demos need Tk support. Headless tests mock Tk and do not establish
+visual quality or validate the platform decoder.

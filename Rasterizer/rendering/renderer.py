@@ -26,13 +26,12 @@ import math
 from collections.abc import Callable, Sequence
 from typing import Any
 
-from ..algebra.math3d import Mat4, Vec3, Vec4
+from ..algebra.math3d import Mat3, Mat4, Vec3, Vec4
 from ..algebra.transforms import (
     look_at,
     ndc_ellipsoid,
     ndc_orthographic,
     ndc_panini,
-    ndc_perspective,
     viewport,
 )
 from ..scene.scene import Light
@@ -52,15 +51,19 @@ class Uniforms:
     """Per-draw uniform state shared by the vertex and fragment shaders.
 
     The renderer fills these values each frame or each draw call: model/view
-    matrices, camera position, aspect ratio, scene lights, and timing. Keeping
+    matrices, camera position, and aspect ratio. Callers supply lights and
+    timing (`time` and `delta_time`, both seconds). Keeping
     them separate from the Material itself ensures that a single material can be
     reused for many objects with different transforms and lighting states.
     """
 
     __slots__ = (
+        "_normal_key",
+        "_normal_matrix",
         "ambient",
         "aspect",
         "camera_pos",
+        "delta_time",
         "lights",
         "model",
         "project",
@@ -70,18 +73,47 @@ class Uniforms:
     )
 
     def __init__(self) -> None:
+        self._normal_key = None
+        self._normal_matrix = Mat3.identity()
         self.model: Mat4 = Mat4.identity()
         self.view: Mat4 = Mat4.identity()
-        self.project: Callable[[Vec3], Vec4] = _default_project
+        self.project: Callable[[Vec4], Vec4] = _default_project
         self.transform: Callable[[Vec4], Vec4] = _default_transform
         self.aspect: float = 1.0
         self.camera_pos: Vec3 = Vec3.zero()
+        # Timing is owned by the caller; draws never advance simulation time.
+        self.delta_time: float = 0.0
         self.time: float = 0.0
         self.lights: list[Light] = []
         self.ambient: float = 0.1
 
+    @property
+    def normal_matrix(self) -> Mat3:
+        """Inverse transpose, cached per model; singular models yield zero normals."""
+        data = self.model.data
+        if self._normal_key != data:
+            linear = Mat3(
+                (
+                    data[0],
+                    data[1],
+                    data[2],
+                    data[4],
+                    data[5],
+                    data[6],
+                    data[8],
+                    data[9],
+                    data[10],
+                )
+            )
+            try:
+                self._normal_matrix = linear.inverse().transpose()
+            except ValueError:
+                self._normal_matrix = Mat3((0.0,) * 9)
+            self._normal_key = data
+        return self._normal_matrix
 
-def _default_project(_world_pos: Vec3) -> Vec4:
+
+def _default_project(_world_pos: Vec4) -> Vec4:
     return Vec4(0, 0, 1, 1)
 
 
@@ -102,6 +134,7 @@ class Camera:
         "_view_cache",
         "_view_key",
         "ellipsoid_strength",
+        "far",
         "fov_y",
         "near",
         "ortho_scale",
@@ -121,6 +154,7 @@ class Camera:
         projection: str = "perspective",
         ellipsoid_strength: float = 0.5,
         ortho_scale: float = 3.0,
+        far: float = 1000.0,
     ) -> None:
         if not isinstance(position, Vec3):
             raise TypeError("position must be a Vec3")
@@ -139,6 +173,24 @@ class Camera:
                 "projection must be one of 'perspective', 'orthographic', "
                 "'panini', 'ellipsoid'"
             )
+        for name, value in (
+            ("near", near),
+            ("far", far),
+            ("fov_y_deg", fov_y_deg),
+            ("ortho_scale", ortho_scale),
+            ("ellipsoid_strength", ellipsoid_strength),
+        ):
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise TypeError(f"{name} must be a real number")
+            if not math.isfinite(value):
+                raise ValueError(f"{name} must be finite")
+        if near <= 0 or far <= near:
+            raise ValueError("require 0 < near < far")
+        if not 0 < fov_y_deg < 180 or ortho_scale <= 0:
+            raise ValueError("require 0 < fov_y_deg < 180 and ortho_scale > 0")
+        if not 0 <= ellipsoid_strength <= 1:
+            raise ValueError("ellipsoid_strength must be in [0, 1]")
+        self.far = far
         self.position = position
         self.target = target
         self.up = up if up is not None else Vec3.unit_y()
@@ -181,62 +233,37 @@ class Camera:
         return self._view_cache
 
     def project(self, view_pos: Vec4, aspect: float) -> Vec4:
-        """Camera-space Vec4 -> clip-space Vec4 (unified across projections).
+        """Map view space to clip coordinates.
 
-        Convention for ALL projections:
-            w_clip = -Z_view   (forward distance; always > 0 in front)
-            z_clip = near      (constant; z_ndc = near/w, reverse-Z)
-            x_clip = nx * w_clip
-            y_clip = ny * w_clip
-        So (x_clip/w_clip, y_clip/w_clip) = (nx, ny) regardless of projection.
-
-        Reference:
-            IMPLEMENTATION_SPEC.md > Public API boundary and > Core architecture > 2. Rendering and backend layer
+        Perspective and nonlinear modes use w=-Z and depth=near/w.
+        Orthographic uses w=1 and linear reverse depth over [near, far],
+        ensuring affine attribute interpolation. Nonlinear filled triangles
+        remain straight-chord approximations; see IMPLEMENTATION_SPEC.md.
         """
         x, y, z = view_pos.x, view_pos.y, view_pos.z
-        w = -z
-        if w < 1e-9:
-            return Vec4(0.0, 0.0, self.near, 0.0)  # will be culled
-
-        f = 1.0 / math.tan(self.fov_y * 0.5)
-
-        if self.projection == "perspective":
-            nx, ny = ndc_perspective(x, y, z, f, aspect)
-        elif self.projection == "orthographic":
+        if not math.isfinite(aspect) or aspect <= 0:
+            raise ValueError("aspect must be finite and positive")
+        if self.projection == "orthographic":
             nx, ny = ndc_orthographic(x, y, z, self.ortho_scale, aspect)
-        elif self.projection == "panini":
+            return Vec4(nx, ny, (self.far + z) / (self.far - self.near), 1.0)
+        w = -z
+        f = 1.0 / math.tan(self.fov_y * 0.5)
+        if self.projection == "perspective":
+            # Preserve behind-eye coordinates for homogeneous near clipping.
+            return Vec4(f * x / aspect, f * y, self.near, w)
+        if self.projection == "panini":
             nx, ny = ndc_panini(x, y, z, f, aspect)
         elif self.projection == "ellipsoid":
             nx, ny = ndc_ellipsoid(x, y, z, f, aspect, self.ellipsoid_strength)
         else:
             raise ValueError(f"unknown projection: {self.projection!r}")
-
         return Vec4(nx * w, ny * w, self.near, w)
 
     def mvp_matrix(self, model: Mat4, aspect: float) -> Mat4 | None:
-        """Bake (proj · view · model) into a single Mat4 if the projection is linear.
+        """Return the baked perspective MVP, or None for other modes.
 
-        Spec:
-            Returns M = proj · view · model when the projection is expressible as
-            a 4x4 matrix. Returns None otherwise (panini, ellipsoid, orthographic).
-
-        Contract:
-            Only 'perspective' has matrix form. 'orthographic' would need a
-            different clip-space convention (linear depth, w = 1) that the
-            rasterizer's near/w depth test does not support; it stays on the
-            general per-vertex path. Panini and ellipsoid are nonlinear per-vertex
-            functions of view-space position and cannot be baked.
-
-        Behavior:
-            For perspective, the matrix produces clip = (nx·w, ny·w, near, w) where
-            w = -Z_view, exactly matching camera.project(). Verified by test.
-
-        Args:
-            model: 4x4 model matrix.
-            aspect: viewport width / height.
-
-        Returns:
-            Mat4 or None.
+        Orthographic currently uses project() for its finite linear depth.
+        Panini and ellipsoid are nonlinear and cannot be baked into a matrix.
         """
         if self.projection != "perspective":
             return None
@@ -278,12 +305,26 @@ class Renderer:
     """
 
     def __init__(self, width: int, height: int) -> None:
+        if (
+            isinstance(width, bool)
+            or isinstance(height, bool)
+            or not isinstance(width, int)
+            or not isinstance(height, int)
+        ):
+            raise TypeError("renderer dimensions must be integers")
+        if width <= 0 or height <= 0:
+            raise ValueError("renderer dimensions must be positive")
         self.width = width
         self.height = height
         self._aspect = width / height
         self._viewport = viewport(0, 0, width, height)
 
+    def _validate_target(self, fb: Any) -> None:
+        if (fb.width, fb.height) != (self.width, self.height):
+            raise ValueError("framebuffer dimensions must match the renderer")
+
     def clear(self, fb: Any, color: int) -> None:
+        self._validate_target(fb)
         fb.clear(color)
 
     # ----- full pipeline -------------------------------------------------
@@ -299,6 +340,7 @@ class Renderer:
         Reference:
             IMPLEMENTATION_SPEC.md > Public API boundary > Renderer and > Core architecture > 2. Rendering and backend layer
         """
+        self._validate_target(fb)
         aspect = self._aspect
         view = camera.view_matrix()
         near = camera.near
@@ -316,18 +358,20 @@ class Renderer:
                 world = model_matrix @ vertex.pos.to_vec4(1.0)
                 clip.append(camera.project(view @ world, aspect))
 
-        for t in range(mesh.triangle_count()):
-            i0, i1, i2 = mesh.triangle(t)
+        indices = iter(mesh.indices)
+        for i0, i1, i2 in zip(indices, indices, indices):
             c0, c1, c2 = clip[i0], clip[i1], clip[i2]
 
-            if c0.w >= near and c1.w >= near and c2.w >= near:
+            if all(_inside_depth(c, camera) for c in (c0, c1, c2)):
                 n0 = (c0.x / c0.w, c0.y / c0.w, c0.z / c0.w)
                 n1 = (c1.x / c1.w, c1.y / c1.w, c1.z / c1.w)
                 n2 = (c2.x / c2.w, c2.y / c2.w, c2.z / c2.w)
                 self._cull_and_raster(fb, vp, n0, n1, n2, color)
                 continue
 
-            for a, b, cc in _clip_near_triangle(c0, c1, c2, near):
+            for a, b, cc in clip_near_triangle(
+                c0, c1, c2, near, orthographic=camera.projection == "orthographic"
+            ):
                 n0 = (a.x / a.w, a.y / a.w, a.z / a.w)
                 n1 = (b.x / b.w, b.y / b.w, b.z / b.w)
                 n2 = (cc.x / cc.w, cc.y / cc.w, cc.z / cc.w)
@@ -343,7 +387,10 @@ class Renderer:
         camera: Camera,
         model: Mat4,
         cull: bool = True,
+        *,
+        depth_write: bool = True,
     ) -> None:
+        self._validate_target(fb)
         aspect = self._aspect
         u = uniforms
         u.aspect = aspect
@@ -384,18 +431,23 @@ class Renderer:
         screen_vertex = Vec4(0, 0, 0, 0)
 
         vertices = mesh.vertices
-        results = (vs(vert, u) for vert in vertices)
-        clip, varyings = zip(*results)
+        if not vertices:
+            return
+        clip, varyings = zip(*[vs(vert, u) for vert in vertices])
 
-        for t in range(mesh.triangle_count()):
-            i0, i1, i2 = mesh.triangle(t)
+        indices = iter(mesh.indices)
+        for i0, i1, i2 in zip(indices, indices, indices):
             c0, c1, c2 = clip[i0], clip[i1], clip[i2]
             v0, v1, v2 = varyings[i0], varyings[i1], varyings[i2]
 
-            if c0.w >= near and c1.w >= near and c2.w >= near:
+            if all(_inside_depth(c, camera) for c in (c0, c1, c2)):
                 clipped = [((c0, v0), (c1, v1), (c2, v2))]
             else:
-                clipped = _clip_near_shaded([(c0, v0), (c1, v1), (c2, v2)], near)
+                clipped = clip_near_shaded(
+                    [(c0, v0), (c1, v1), (c2, v2)],
+                    near,
+                    orthographic=camera.projection == "orthographic",
+                )
 
             for (tc0, tv0), (tc1, tv1), (tc2, tv2) in clipped:
                 vp.mul_vec4_into(
@@ -451,15 +503,17 @@ class Renderer:
                     tv1,
                     tv2,
                     fs,
+                    depth_write=depth_write,
                 )
 
     def draw_scene(
         self, fb: Any, root: Any, camera: Camera, uniforms: Uniforms
     ) -> None:
         """Traverse, cull, and draw every renderable node."""
+        self._validate_target(fb)
 
         def draw_node(node):
-            if node.mesh is not None and node.material is not None:
+            if self._is_visible(node, camera):
                 self.draw_mesh_shaded(
                     fb,
                     node.mesh,
@@ -468,6 +522,8 @@ class Renderer:
                     uniforms,
                     camera,
                     node.world_transform,
+                    cull=node.material.cull,
+                    depth_write=node.material.depth_write,
                 )
 
         root.traverse(Mat4.identity(), draw_node)
@@ -488,6 +544,7 @@ class Renderer:
         on hardware vertex-shader caching, which does not apply to a Python
         rasterizer.
         """
+        self._validate_target(fb)
         for xform in transforms:
             self.draw_mesh_shaded(
                 fb,
@@ -498,6 +555,7 @@ class Renderer:
                 camera,
                 xform,
                 cull=material.cull,
+                depth_write=material.depth_write,
             )
 
     def draw_skybox(
@@ -519,6 +577,7 @@ class Renderer:
             color_top: color at the top of the screen.
             color_bottom: color at the bottom.
         """
+        self._validate_target(fb)
         fill_gradient(fb, color_top, color_bottom)
 
     def draw_mesh_wireframe(
@@ -545,10 +604,14 @@ class Renderer:
             curve_segments: 1 for perspective/orthographic, 12-16 for
                 panini/ellipsoid at high fov.
         """
+        self._validate_target(fb)
+        if isinstance(curve_segments, bool) or not isinstance(curve_segments, int):
+            raise TypeError("curve_segments must be an integer")
+        if curve_segments <= 0:
+            raise ValueError("curve_segments must be positive")
         view = camera.view_matrix()
         aspect = self._aspect
         vp = self._viewport
-        near = camera.near
         verts = mesh.vertices
 
         for i0, i1 in mesh.edges():
@@ -561,15 +624,21 @@ class Renderer:
                 wy = p0.y + (p1.y - p0.y) * t
                 wz = p0.z + (p1.z - p0.z) * t
                 world = model @ Vec4(wx, wy, wz, 1.0)
-                clip = camera.project(view @ world, aspect)
-                if clip.w < near:
-                    prev = None
-                    continue
-                inv_w = 1.0 / clip.w
-                s = vp @ Vec4(clip.x * inv_w, clip.y * inv_w, clip.z * inv_w, 1.0)
+                current = view @ world
                 if prev is not None:
-                    draw_line(fb, prev[0], prev[1], prev[2], s.x, s.y, s.z, color)
-                prev = (s.x, s.y, s.z)
+                    segment = _clip_view_segment(prev, current, camera)
+                    if segment is not None:
+                        screen = []
+                        for endpoint in segment:
+                            clip = camera.project(endpoint, aspect)
+                            inv_w = 1.0 / clip.w
+                            point = vp @ Vec4(
+                                clip.x * inv_w, clip.y * inv_w, clip.z * inv_w, 1.0
+                            )
+                            screen.append(point)
+                        a, b = screen
+                        draw_line(fb, a.x, a.y, a.z, b.x, b.y, b.z, color)
+                prev = current
 
     def draw_scene_wireframe(
         self,
@@ -627,6 +696,7 @@ class Renderer:
         For tests that only exercise rasterization or depth, pass cull=False
         to bypass the winding check.
         """
+        self._validate_target(fb)
         self._cull_and_raster(fb, self._viewport, n0, n1, n2, color, cull=cull)
 
     def _cull_and_raster(
@@ -656,3 +726,33 @@ def _clip_near_triangle(c0, c1, c2, near):
 def _clip_near_shaded(verts, near):
     """Compatibility wrapper around the backend shaded-clip implementation."""
     return clip_near_shaded(verts, near)
+
+
+def _inside_depth(vertex: Vec4, camera: Camera) -> bool:
+    if camera.projection == "orthographic":
+        return 0 <= vertex.z <= vertex.w
+    return vertex.w >= camera.near
+
+
+def _clip_view_segment(a: Vec4, b: Vec4, camera: Camera):
+    """Clip a view-space segment before any nonlinear projection."""
+    start, end = 0.0, 1.0
+    planes = [(lambda v: -v.z - camera.near)]
+    if camera.projection == "orthographic":
+        planes.append(lambda v: camera.far + v.z)
+    for distance in planes:
+        da, db = distance(a), distance(b)
+        if da < 0 and db < 0:
+            return None
+        if (da < 0) != (db < 0):
+            t = da / (da - db)
+            if da < 0:
+                start = max(start, t)
+            else:
+                end = min(end, t)
+    if start > end:
+        return None
+    return tuple(
+        Vec4(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.z + (b.z - a.z) * t, 1.0)
+        for t in (start, end)
+    )

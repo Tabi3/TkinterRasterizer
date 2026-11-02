@@ -15,6 +15,7 @@ Contract:
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable, Sequence
 
 from ..algebra.math3d import Mat4, Vec3
@@ -61,6 +62,18 @@ class Light:
             raise TypeError("intensity must be a real numeric value")
         if not (isinstance(radius, (int, float)) and not isinstance(radius, bool)):
             raise TypeError("radius must be a real numeric value")
+        if not math.isfinite(intensity) or intensity < 0:
+            raise ValueError("intensity must be finite and nonnegative")
+        if not math.isfinite(radius) or radius <= 0:
+            raise ValueError("radius must be finite and positive")
+        if any(
+            not isinstance(c, (int, float))
+            or isinstance(c, bool)
+            or not math.isfinite(c)
+            or c < 0
+            for c in color
+        ):
+            raise ValueError("light color channels must be finite and nonnegative")
         self.kind = kind
         self.position = position or Vec3.zero()
         self.direction = (direction or Vec3(0, -1, 0)).normalize()
@@ -109,6 +122,17 @@ class Node:
         self.parent: Node | None = None
 
     def add_child(self, child: Node) -> Node:
+        if not isinstance(child, Node):
+            raise TypeError("child must be a Node")
+        ancestor = self
+        while ancestor is not None:
+            if ancestor is child:
+                raise ValueError("scene graph cannot contain cycles")
+            ancestor = ancestor.parent
+        if child.parent is self:
+            return child
+        if child.parent is not None:
+            child.parent.children.remove(child)
         child.parent = self
         self.children.append(child)
         return child

@@ -6,8 +6,10 @@ Spec:
     (model, view, lights, camera_pos) are NOT here — they live in Uniforms.
 
 Contract:
-    Immutable after construction. Textures are captured in fs at factory
-    time; rebuild the Material when textures change, not when lights move.
+    Render flags are mutable and read on each draw. Textures are captured at factory
+    time; in-place pixel edits are visible. Rebuild shader callbacks when texture
+    dimensions, wrapping, or the data object change. cast_shadow is reserved;
+    no shadow pass is implemented.
 
     Shader pair contract (same as before):
         vs(vertex, u) -> (clip: Vec4, varyings: tuple[float])

@@ -1,12 +1,11 @@
 """Minimal unshaded cube demo using the direct mesh draw path."""
 
 import sys
-import time
 
 try:
-    from .common import parse_resolution
+    from .common import advance_time, parse_resolution
 except ImportError:  # pragma: no cover - direct script execution
-    from common import parse_resolution
+    from common import advance_time, parse_resolution
 
 from Rasterizer.algebra.math3d import Vec3
 from Rasterizer.algebra.transforms import rotate_y
@@ -17,7 +16,8 @@ from Rasterizer.rendering.renderer import Camera, Renderer
 _state = {}
 
 
-def draw(framebuffer, _dt):
+def draw(framebuffer, dt):
+    t = advance_time(_state, dt)
     if "renderer" not in _state:
         _state["renderer"] = Renderer(framebuffer.width, framebuffer.height)
         _state["mesh"] = make_cube()
@@ -27,7 +27,7 @@ def draw(framebuffer, _dt):
     _state["renderer"].draw_mesh(
         framebuffer,
         _state["mesh"],
-        rotate_y(time.perf_counter() * 0.4),
+        rotate_y(t * 0.4),
         0xA0D8FF,
         _state["camera"],
     )

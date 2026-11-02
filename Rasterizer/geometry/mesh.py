@@ -93,6 +93,8 @@ class AABB:
             A bounding box spanning the minimum and maximum positions.
         """
         vertex_list = tuple(verts)
+        if not vertex_list:
+            return cls.empty()
         xs = (vertex.pos.x for vertex in vertex_list)
         ys = (vertex.pos.y for vertex in vertex_list)
         zs = (vertex.pos.z for vertex in vertex_list)
@@ -107,7 +109,11 @@ class AABB:
 
     def is_empty(self):
         """Return True when the box has no valid extents."""
-        return self.min_x > self.max_x
+        return (
+            self.min_x > self.max_x
+            or self.min_y > self.max_y
+            or self.min_z > self.max_z
+        )
 
     def center(self):
         """Return the center of the box as a Vec3."""
@@ -284,6 +290,8 @@ class Mesh:
             self.indices = array("I", indices)
         if len(self.indices) % 3 != 0:
             raise ValueError(f"indices length {len(self.indices)} not divisible by 3")
+        if any(i >= len(self.vertices) for i in self.indices):
+            raise ValueError("mesh index is outside the vertex buffer")
         self.aabb = AABB.from_vertices(self.vertices)
 
     def triangle_count(self):

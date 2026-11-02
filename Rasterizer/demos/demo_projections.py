@@ -15,16 +15,15 @@ Reference:
 """
 
 import sys
-import time
 from array import array
 
 try:
-    from .common import parse_resolution
+    from .common import advance_time, parse_resolution
 except ImportError:  # pragma: no cover - package import fallback
     try:
-        from common import parse_resolution
+        from common import advance_time, parse_resolution
     except ImportError:  # pragma: no cover - direct repo launch fallback
-        from Rasterizer.demos.common import parse_resolution
+        from Rasterizer.demos.common import advance_time, parse_resolution
 
 from Rasterizer.algebra.math3d import Vec3
 from Rasterizer.algebra.transforms import rotate_x, rotate_y
@@ -41,6 +40,7 @@ _viewer = None
 
 
 def draw(fb, dt):
+    t = advance_time(_state, dt)
     if "renderer" not in _state:
         _state["renderer"] = Renderer(fb.width, fb.height)
         cube = make_cube(size=2.0, subdivisions=3)
@@ -64,18 +64,19 @@ def draw(fb, dt):
         _state["wireframe"] = False
 
     if _viewer is not None:
-        for i, name in enumerate(_proj_names):
-            if _viewer.key_was_pressed(str(i + 1)):
+        for key in _viewer.key_presses():
+            if key in ("1", "2", "3", "4"):
+                name = _proj_names[int(key) - 1]
                 _state["camera"].projection = name
-                _viewer.root.title(f"Rasterizer — {name} ({fb.width}x{fb.height})")
+                _viewer.root.title(f"Rasterizer ? {name} ({fb.width}x{fb.height})")
                 print(f"projection: {name}")
-        if _viewer.key_was_pressed("w"):
-            _state["wireframe"] = not _state["wireframe"]
-            print(f"wireframe: {_state['wireframe']}")
+            elif key == "w":
+                _state["wireframe"] = not _state["wireframe"]
+                print(f"wireframe: {_state['wireframe']}")
 
-    t = time.perf_counter()
     _state["root"].children[0].local_transform = rotate_y(t * 0.5) @ rotate_x(t * 0.3)
     _state["uniforms"].time = t
+    _state["uniforms"].delta_time = dt
 
     renderer = _state["renderer"]
     renderer.draw_skybox(fb, 0x5070A0, 0x101828)

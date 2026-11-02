@@ -2,14 +2,15 @@
 
 Spec:
     Centralize reusable demo-setup logic so each example script can focus on its
-    scene setup and rendering behavior instead of repeating CLI parsing code.
+    scene setup and rendering behavior instead of repeating CLI or timing logic.
 
 Contract:
     This module must stay small, dependency-free, and safe to import from any
     example module in the project.
 
 Behavior:
-    The helper accepts a command-line argument list and returns the requested
+    Animation consumes caller-supplied elapsed seconds, never frame counts.
+    The CLI helper accepts a command-line argument list and returns the requested
     window resolution when present, otherwise it falls back to the provided
     default value.
 
@@ -20,6 +21,7 @@ Reference:
 
 from __future__ import annotations
 
+import math
 import sys
 from pathlib import Path
 
@@ -47,3 +49,26 @@ def parse_resolution(
     from Rasterizer.cli import parse_resolution as parse
 
     return parse(argv, default)
+
+
+def advance_time(state: dict, dt: float) -> float:
+    """Advance demo time in seconds, independent of render/presentation count.
+
+    Compensated summation keeps long runs and different frame partitions close.
+    Zero delta freezes animation; stalls consume their full elapsed time.
+    """
+    if isinstance(dt, bool) or not isinstance(dt, (int, float)):
+        raise TypeError("dt must be a real number of seconds")
+    if not math.isfinite(dt) or dt < 0:
+        raise ValueError("dt must be finite and nonnegative")
+    elapsed = state.get("elapsed", 0.0)
+    if dt == 0:
+        state.setdefault("elapsed", elapsed)
+        return elapsed
+    adjusted = dt - state.get("elapsed_error", 0.0)
+    total = elapsed + adjusted
+    if not math.isfinite(total):
+        raise ValueError("elapsed time must remain finite")
+    state["elapsed_error"] = (total - elapsed) - adjusted
+    state["elapsed"] = total
+    return total

@@ -201,6 +201,8 @@ def rasterize_triangle_shaded(
     var1,
     var2,
     fs: Callable[[tuple[float, ...]], int],
+    *,
+    depth_write: bool = True,
 ):
     """Span-based rasterizer with perspective-correct varying interpolation.
 
@@ -233,6 +235,18 @@ def rasterize_triangle_shaded(
         raise TypeError("framebuffer must provide width/height/color/depth")
     if not callable(fs):
         raise TypeError("fragment shader must be callable")
+    if not isinstance(depth_write, bool):
+        raise TypeError("depth_write must be boolean")
+    if len(var0) != len(var1) or len(var0) != len(var2):
+        raise ValueError("varying lengths must match")
+    if any(
+        not math.isfinite(component)
+        for v in (vertex_0, vertex_1, vertex_2)
+        for component in v
+    ):
+        raise ValueError("screen vertices must be finite")
+    if any(v[3] <= 0 for v in (vertex_0, vertex_1, vertex_2)):
+        raise ValueError("inverse w must be positive")
     coord_x0, coord_y0, depth_z0, inv_w0 = vertex_0
     coord_x1, coord_y1, depth_z1, inv_w1 = vertex_1
     coord_x2, coord_y2, depth_z2, inv_w2 = vertex_2
@@ -296,23 +310,11 @@ def rasterize_triangle_shaded(
     weighted_var1 = tuple(v * inv_w1 for v in var1)
     weighted_var2 = tuple(v * inv_w2 for v in var2)
 
-    w0_0, w0_1, w0_2, w0_3, w0_4 = None, None, None, None, None
-    w1_0, w1_1, w1_2, w1_3, w1_4 = None, None, None, None, None
-    w2_0, w2_1, w2_2, w2_3, w2_4 = None, None, None, None, None
-
-    if var_count == 2:
-        w0_0, w0_1 = weighted_var0
-        w1_0, w1_1 = weighted_var1
-        w2_0, w2_1 = weighted_var2
-    elif var_count == 3:
-        w0_0, w0_1, w0_2 = weighted_var0
-        w1_0, w1_1, w1_2 = weighted_var1
-        w2_0, w2_1, w2_2 = weighted_var2
-    elif var_count == 5:
-        w0_0, w0_1, w0_2, w0_3, w0_4 = weighted_var0
-        w1_0, w1_1, w1_2, w1_3, w1_4 = weighted_var1
-        w2_0, w2_1, w2_2, w2_3, w2_4 = weighted_var2
-
+    denominator_dx = edge_a0 * inv_w0 + edge_a1 * inv_w1 + edge_a2 * inv_w2
+    numerator_dx = tuple(
+        edge_a0 * a + edge_a1 * b + edge_a2 * c
+        for a, b, c in zip(weighted_var0, weighted_var1, weighted_var2)
+    )
     frame_width = fb.width
     frame_color = fb.color
     frame_depth = fb.depth
@@ -361,49 +363,70 @@ def rasterize_triangle_shaded(
         if skip_scanline or span_x0 > span_x1:
             continue
 
-        cx0 = span_x0 + 0.5
+        cx0 = span_x0
         e0 = edge_a0 * cx0 + base0
         e1 = edge_a1 * cx0 + base1
         e2 = edge_a2 * cx0 + base2
         depth_value = (e0 * depth_z0 + e1 * depth_z1 + e2 * depth_z2) * local_inv_area
 
+        denominator = e0 * inv_w0 + e1 * inv_w1 + e2 * inv_w2
+        numerators = [
+            e0 * a + e1 * b + e2 * c
+            for a, b, c in zip(weighted_var0, weighted_var1, weighted_var2)
+        ]
+        if var_count == 2:
+            n0, n1 = numerators
+            dx0, dx1 = numerator_dx
+        elif var_count == 3:
+            n0, n1, n2 = numerators
+            dx0, dx1, dx2 = numerator_dx
+        elif var_count == 5:
+            n0, n1, n2, n3, n4 = numerators
+            dx0, dx1, dx2, dx3, dx4 = numerator_dx
         pixel_index = pixel_y * frame_width + span_x0
         for _ in range(span_x0, span_x1 + 1):
             if depth_value > frame_depth[pixel_index]:
-                inv_den = 1.0 / (e0 * inv_w0 + e1 * inv_w1 + e2 * inv_w2)
+                inv_den = 1.0 / denominator
                 if var_count == 2:
-                    v0 = (e0 * w0_0 + e1 * w1_0 + e2 * w2_0) * inv_den
-                    v1 = (e0 * w0_1 + e1 * w1_1 + e2 * w2_1) * inv_den
+                    v0 = n0 * inv_den
+                    v1 = n1 * inv_den
                     fragment_color = fs((v0, v1))
                 elif var_count == 3:
-                    v0 = (e0 * w0_0 + e1 * w1_0 + e2 * w2_0) * inv_den
-                    v1 = (e0 * w0_1 + e1 * w1_1 + e2 * w2_1) * inv_den
-                    v2 = (e0 * w0_2 + e1 * w1_2 + e2 * w2_2) * inv_den
+                    v0 = n0 * inv_den
+                    v1 = n1 * inv_den
+                    v2 = n2 * inv_den
                     fragment_color = fs((v0, v1, v2))
                 elif var_count == 5:
-                    v0 = (e0 * w0_0 + e1 * w1_0 + e2 * w2_0) * inv_den
-                    v1 = (e0 * w0_1 + e1 * w1_1 + e2 * w2_1) * inv_den
-                    v2 = (e0 * w0_2 + e1 * w1_2 + e2 * w2_2) * inv_den
-                    v3 = (e0 * w0_3 + e1 * w1_3 + e2 * w2_3) * inv_den
-                    v4 = (e0 * w0_4 + e1 * w1_4 + e2 * w2_4) * inv_den
+                    v0 = n0 * inv_den
+                    v1 = n1 * inv_den
+                    v2 = n2 * inv_den
+                    v3 = n3 * inv_den
+                    v4 = n4 * inv_den
                     fragment_color = fs((v0, v1, v2, v3, v4))
                 else:
                     fragment_color = fs(
-                        tuple(
-                            (
-                                e0 * weighted_var0[k]
-                                + e1 * weighted_var1[k]
-                                + e2 * weighted_var2[k]
-                            )
-                            * inv_den
-                            for k in range(var_count)
-                        )
+                        tuple(numerators[k] * inv_den for k in range(var_count))
                     )
-                frame_depth[pixel_index] = depth_value
+                if depth_write:
+                    frame_depth[pixel_index] = depth_value
                 frame_color[pixel_index] = fragment_color & 0xFFFFFF
-            e0 += edge_a0
-            e1 += edge_a1
-            e2 += edge_a2
+            denominator += denominator_dx
+            if var_count == 2:
+                n0 += dx0
+                n1 += dx1
+            elif var_count == 3:
+                n0 += dx0
+                n1 += dx1
+                n2 += dx2
+            elif var_count == 5:
+                n0 += dx0
+                n1 += dx1
+                n2 += dx2
+                n3 += dx3
+                n4 += dx4
+            else:
+                for k in range(var_count):
+                    numerators[k] += numerator_dx[k]
             depth_value += local_depth_dx
             pixel_index += 1
 
@@ -433,6 +456,30 @@ def draw_line(fb, x0, y0, z0, x1, y1, z1, color):
         raise TypeError("framebuffer must provide width/height/color/depth")
     if not (isinstance(color, int) and not isinstance(color, bool)):
         raise TypeError("color must be an integer packed RGB value")
+    if not all(math.isfinite(value) for value in (x0, y0, z0, x1, y1, z1)):
+        raise ValueError("line coordinates must be finite")
+    # Clip before stepping so distant offscreen endpoints cannot stall a frame.
+    dx, dy, dz = x1 - x0, y1 - y0, z1 - z0
+    t0, t1 = 0.0, 1.0
+    for p, q in (
+        (-dx, x0),
+        (dx, fb.width - 1 - x0),
+        (-dy, y0),
+        (dy, fb.height - 1 - y0),
+    ):
+        if p == 0:
+            if q < 0:
+                return
+        else:
+            t = q / p
+            if p < 0:
+                t0 = max(t0, t)
+            else:
+                t1 = min(t1, t)
+            if t0 > t1:
+                return
+    x1, y1, z1 = x0 + dx * t1, y0 + dy * t1, z0 + dz * t1
+    x0, y0, z0 = x0 + dx * t0, y0 + dy * t0, z0 + dz * t0
     x0i = round(x0)
     y0i = round(y0)
     x1i = round(x1)

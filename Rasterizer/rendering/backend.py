@@ -17,110 +17,62 @@ Reference:
 
 from __future__ import annotations
 
+import math
+
 from ..algebra.math3d import Vec4
 from .rasterizer import rasterize_triangle
 
 
-def clip_near_triangle(clip_vertex_0, clip_vertex_1, clip_vertex_2, near):
-    """Sutherland-Hodgman against the near plane (w >= near).
-
-    Reference:
-        IMPLEMENTATION_SPEC.md > Core architecture > 2. Rendering and backend layer
-    """
-    if not (
-        hasattr(clip_vertex_0, "w")
-        and hasattr(clip_vertex_1, "w")
-        and hasattr(clip_vertex_2, "w")
-    ):
-        raise TypeError("clip vertices must provide a w component")
-    if not (isinstance(near, (int, float)) and not isinstance(near, bool)):
-        raise TypeError("near must be numeric")
-    vertices = (clip_vertex_0, clip_vertex_1, clip_vertex_2)
+def _clip_polygon(vertices, distance):
+    """Clip (position, varyings) pairs, interpolating at the same intersection."""
     clipped = []
-    for index in range(3):
-        current = vertices[index]
-        next_vertex = vertices[(index + 1) % 3]
-        current_inside = current.w >= near
-        next_inside = next_vertex.w >= near
-        if current_inside and next_inside:
-            clipped.append(next_vertex)
-        elif current_inside and not next_inside:
-            local_t = (near - current.w) / (next_vertex.w - current.w)
-            clipped.append(
-                Vec4(
-                    current.x + local_t * (next_vertex.x - current.x),
-                    current.y + local_t * (next_vertex.y - current.y),
-                    current.z + local_t * (next_vertex.z - current.z),
-                    near,
-                )
+    vertices = (*vertices[1:], vertices[0])
+    current, current_var = vertices[-1]
+    current_d = distance(current)
+    for next_vertex, next_var in vertices:
+        next_d = distance(next_vertex)
+        if (current_d >= 0) != (next_d >= 0):
+            t = current_d / (current_d - next_d)
+            intersection = Vec4(
+                current.x + t * (next_vertex.x - current.x),
+                current.y + t * (next_vertex.y - current.y),
+                current.z + t * (next_vertex.z - current.z),
+                current.w + t * (next_vertex.w - current.w),
             )
-        elif not current_inside and next_inside:
-            local_t = (near - current.w) / (next_vertex.w - current.w)
-            clipped.append(
-                Vec4(
-                    current.x + local_t * (next_vertex.x - current.x),
-                    current.y + local_t * (next_vertex.y - current.y),
-                    current.z + local_t * (next_vertex.z - current.z),
-                    near,
-                )
-            )
-            clipped.append(next_vertex)
-    if len(clipped) < 3:
-        return []
+            varying = tuple(a + t * (b - a) for a, b in zip(current_var, next_var))
+            clipped.append((intersection, varying))
+        if next_d >= 0:
+            clipped.append((next_vertex, next_var))
+        current, current_var, current_d = next_vertex, next_var, next_d
+    return clipped
+
+
+def clip_near_triangle(c0, c1, c2, near, *, orthographic=False):
+    """Clip perspective at w >= near, or orthographic at 0 <= z <= w."""
     return [
-        (clipped[0], clipped[i], clipped[i + 1]) for i in range(1, len(clipped) - 1)
+        tuple(vertex for vertex, _ in triangle)
+        for triangle in clip_near_shaded(
+            [(c0, ()), (c1, ()), (c2, ())], near, orthographic=orthographic
+        )
     ]
 
 
-def clip_near_shaded(verts, near):
-    """Sutherland-Hodgman against w >= near while preserving varyings.
-
-    Reference:
-        IMPLEMENTATION_SPEC.md > Core architecture > 2. Rendering and backend layer
-    """
-    clipped = []
-    for index in range(3):
-        current_clip, current_varying = verts[index]
-        next_clip, next_varying = verts[(index + 1) % 3]
-        current_inside = current_clip.w >= near
-        next_inside = next_clip.w >= near
-
-        if current_inside:
-            if next_inside:
-                clipped.append((next_clip, next_varying))
-            else:
-                local_t = (near - current_clip.w) / (next_clip.w - current_clip.w)
-                new_clip = Vec4(
-                    current_clip.x + local_t * (next_clip.x - current_clip.x),
-                    current_clip.y + local_t * (next_clip.y - current_clip.y),
-                    current_clip.z + local_t * (next_clip.z - current_clip.z),
-                    near,
-                )
-                new_varying = tuple(
-                    current_varying[k]
-                    + local_t * (next_varying[k] - current_varying[k])
-                    for k in range(len(current_varying))
-                )
-                clipped.append((new_clip, new_varying))
-        else:
-            if next_inside:
-                local_t = (near - current_clip.w) / (next_clip.w - current_clip.w)
-                new_clip = Vec4(
-                    current_clip.x + local_t * (next_clip.x - current_clip.x),
-                    current_clip.y + local_t * (next_clip.y - current_clip.y),
-                    current_clip.z + local_t * (next_clip.z - current_clip.z),
-                    near,
-                )
-                new_varying = tuple(
-                    current_varying[k]
-                    + local_t * (next_varying[k] - current_varying[k])
-                    for k in range(len(current_varying))
-                )
-                clipped.append((new_clip, new_varying))
-                clipped.append((next_clip, next_varying))
-
-    if len(clipped) < 3:
-        return []
+def clip_near_shaded(verts, near, *, orthographic=False):
+    """Clip a triangle while preserving its shader varyings."""
+    if len(verts) != 3:
+        raise ValueError("exactly three vertices are required")
+    if not isinstance(near, (int, float)) or isinstance(near, bool):
+        raise TypeError("near must be numeric")
+    if not math.isfinite(near) or near <= 0:
+        raise ValueError("near must be positive")
+    if len({len(varying) for _, varying in verts}) != 1:
+        raise ValueError("varying lengths must match")
+    if orthographic:
+        clipped = _clip_polygon(verts, lambda v: v.w - v.z)
+        if clipped:
+            clipped = _clip_polygon(clipped, lambda v: v.z)
+    else:
+        clipped = _clip_polygon(verts, lambda v: v.w - near)
     return [
         (clipped[0], clipped[i], clipped[i + 1]) for i in range(1, len(clipped) - 1)
     ]
@@ -180,7 +132,7 @@ def aabb_visible(world_aabb, view_matrix, near):
     if not (isinstance(near, (int, float)) and not isinstance(near, bool)):
         raise TypeError("near must be numeric")
     view_aabb = world_aabb.transform(view_matrix)
-    return view_aabb.min_z < -near
+    return view_aabb.min_z <= -near
 
 
 def fill_gradient(fb, color_top, color_bottom):
@@ -227,9 +179,9 @@ def fill_gradient(fb, color_top, color_bottom):
     inv_h = 1.0 / (h - 1) if h > 1 else 1.0
     for y in range(h):
         t = y * inv_h
-        r = int(br + (tr - br) * t)
-        g = int(bg + (tg - bg) * t)
-        b = int(bb + (tb - bb) * t)
+        r = int(tr + (br - tr) * t)
+        g = int(tg + (bg - tg) * t)
+        b = int(tb + (bb - tb) * t)
         packed = (r << 16) | (g << 8) | b
         start = y * w
         end = start + w
