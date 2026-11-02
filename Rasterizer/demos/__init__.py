@@ -19,4 +19,5 @@ Reference:
 
 from .common import parse_resolution
 
+
 __all__ = ["parse_resolution"]

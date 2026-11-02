@@ -2,6 +2,7 @@
 
 import math
 import random
+from array import array
 
 import pytest
 
@@ -24,6 +25,7 @@ from Rasterizer.scene.scene import Light, Node
 @pytest.mark.parametrize("count", [0, 1, 2, 3, 4, 5, 8])
 @pytest.mark.parametrize("reverse", [False, True])
 def test_pixel_center_depth_and_perspective_varyings(count, reverse):
+
     vertices = [(0.0, 0.0, 0.2, 1.0), (15.0, 0.0, 0.8, 0.5), (0.0, 15.0, 0.2, 0.25)]
     varying = [tuple(float(i + k) for k in range(count)) for i in range(3)]
     if reverse:
@@ -32,45 +34,52 @@ def test_pixel_center_depth_and_perspective_varyings(count, reverse):
     fb = Framebuffer(16, 16)
     captured = []
     rasterize_triangle_shaded(
-        fb, *vertices, *varying, lambda v: captured.append(v) or 0xFFFFFF
+        fb,
+        vertices[0],
+        vertices[1],
+        vertices[2],
+        varying[0],
+        varying[1],
+        varying[2],
+        lambda v: captured.append(v) or 0xFFFFFF,
     )
     assert fb.get_depth(0, 0) == pytest.approx(0.22)
+
     # First covered pixel is (0.5, 0.5), with these screen barycentrics.
     weights = (14 / 15, 0.5 / 15, 0.5 / 15)
     denominator = sum(w * vertex[3] for w, vertex in zip(weights, vertices))
-    expected = tuple(
-        sum(
-            w * vertex[3] * values[k]
-            for w, vertex, values in zip(weights, vertices, varying)
-        )
-        / denominator
-        for k in range(count)
-    )
+    expected = tuple(sum(w * vertex[3] * values[k] for w, vertex, values in zip(weights, vertices, varying)) / denominator for k in range(count))
     assert captured[0] == pytest.approx(expected)
 
 
 def test_flat_and_shaded_depth_agree_for_random_triangles():
+
     rng = random.Random(2718)
     for _ in range(30):
-        vertices = [
-            (rng.uniform(-8, 40), rng.uniform(-8, 40), rng.uniform(0.1, 0.9), 1.0)
-            for _ in range(3)
-        ]
+        vertices = [(rng.uniform(-8, 40), rng.uniform(-8, 40), rng.uniform(0.1, 0.9), 1.0) for _ in range(3)]
         flat, shaded = Framebuffer(32, 32), Framebuffer(32, 32)
-        rasterize_triangle(flat, *vertices, 0xFFFFFF)
-        rasterize_triangle_shaded(shaded, *vertices, (), (), (), lambda v: 0xFFFFFF)
+        rasterize_triangle(flat, vertices[0], vertices[1], vertices[2], 0xFFFFFF)
+        rasterize_triangle_shaded(
+            shaded,
+            vertices[0],
+            vertices[1],
+            vertices[2],
+            (),
+            (),
+            (),
+            lambda v: 0xFFFFFF,
+        )
         assert flat.color == shaded.color
         assert list(flat.depth) == pytest.approx(list(shaded.depth), abs=2e-6)
 
 
 def test_shaded_depth_write_disabled_still_tests_existing_depth():
+
     fb = Framebuffer(8, 8)
     vertices = ((0, 0, 0.5, 1), (8, 0, 0.5, 1), (0, 8, 0.5, 1))
     fb.put_depthtested(0, 0, 0xFF0000, 0.75)
     before = fb.depth[:]
-    rasterize_triangle_shaded(
-        fb, *vertices, (), (), (), lambda v: 0xFFFFFF, depth_write=False
-    )
+    rasterize_triangle_shaded(fb, *vertices, (), (), (), lambda v: 0xFFFFFF, depth_write=False)
     assert fb.depth == before
     assert fb.get(0, 0) == 0xFF0000
     assert fb.get(1, 1) == 0xFFFFFF
@@ -78,6 +87,7 @@ def test_shaded_depth_write_disabled_still_tests_existing_depth():
 
 @pytest.mark.parametrize("bad", [0.0, -1.0, math.inf, math.nan])
 def test_shaded_rejects_invalid_inverse_w(bad):
+
     with pytest.raises(ValueError):
         rasterize_triangle_shaded(
             Framebuffer(4, 4),
@@ -92,6 +102,7 @@ def test_shaded_rejects_invalid_inverse_w(bad):
 
 
 def test_mismatched_varyings_rejected():
+
     with pytest.raises(ValueError, match="varying"):
         rasterize_triangle_shaded(
             Framebuffer(4, 4),
@@ -106,6 +117,7 @@ def test_mismatched_varyings_rejected():
 
 
 def test_orthographic_has_affine_attributes_and_linear_reverse_depth():
+
     camera = Camera(
         Vec3.zero(),
         Vec3(0, 0, -1),
@@ -122,9 +134,12 @@ def test_orthographic_has_affine_attributes_and_linear_reverse_depth():
     assert [v.w for v in vertices] == [1, 1, 1]
     assert [v.z for v in vertices] == pytest.approx([0.9, 0.3, 0.9])
     fb, captured = Framebuffer(10, 10), []
+    screen = tuple((5 * (v.x + 1), 5 * (1 - v.y), v.z, 1.0) for v in vertices)
     rasterize_triangle_shaded(
         fb,
-        *((5 * (v.x + 1), 5 * (1 - v.y), v.z, 1) for v in vertices),
+        screen[0],
+        screen[1],
+        screen[2],
         (0,),
         (1,),
         (0,),
@@ -136,6 +151,7 @@ def test_orthographic_has_affine_attributes_and_linear_reverse_depth():
 
 @pytest.mark.parametrize("projection", ["perspective", "orthographic"])
 def test_scene_honors_cull_depth_write_and_instancing(projection):
+
     mesh = Mesh(
         [
             Vertex(Vec3(-0.5, -0.5, -2)),
@@ -166,11 +182,10 @@ def test_scene_honors_cull_depth_write_and_instancing(projection):
 
 
 def test_invisible_scene_skips_vertex_shader():
-    mesh = Mesh([Vertex(Vec3(0, 0, 1))] * 3)
 
+    mesh = Mesh([Vertex(Vec3(0, 0, 1))] * 3)
     def unexpected(v, u):
         pytest.fail("hidden geometry reached the vertex shader")
-
     Renderer(8, 8).draw_scene(
         Framebuffer(8, 8),
         Node(mesh, Material(unexpected, lambda v: 1)),
@@ -181,11 +196,8 @@ def test_invisible_scene_skips_vertex_shader():
 
 @pytest.mark.parametrize("textured", [False, True])
 def test_normals_use_inverse_transpose_and_handle_coincident_light(textured):
-    vs, _ = (
-        make_textured_lit_shader(Texture.solid(1, 1, 0xFFFFFF))
-        if textured
-        else make_gouraud_shader(light_color=(1, 1, 1), ambient=0)
-    )
+
+    vs, _ = make_textured_lit_shader(Texture.solid(1, 1, 0xFFFFFF)) if textured else make_gouraud_shader(light_color=(1, 1, 1), ambient=0)
     u = Uniforms()
     u.ambient = 0
     u.model = Mat4((2, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1))
@@ -199,6 +211,7 @@ def test_normals_use_inverse_transpose_and_handle_coincident_light(textured):
 
 
 def test_lit_texture_reflects_pixel_updates():
+
     texture = Texture.solid(1, 1, 0xFFFFFF)
     _, fs = make_textured_lit_shader(texture)
     texture.data[0] = 0x123456
@@ -206,6 +219,7 @@ def test_lit_texture_reflects_pixel_updates():
 
 
 def test_orthographic_clips_near_and_far_and_preserves_varyings():
+
     vertices = [
         (Vec4(0, 0, 1.5, 1), (1.5,)),
         (Vec4(1, 0, 0.5, 1), (0.5,)),
@@ -220,6 +234,7 @@ def test_orthographic_clips_near_and_far_and_preserves_varyings():
 
 
 def test_perspective_preserves_behind_eye_coordinates_for_clipping():
+
     camera = Camera(Vec3.zero(), Vec3(0, 0, -1))
     behind = camera.project(Vec4(2, 3, 1, 1), 1)
     assert behind.w == -1
@@ -227,16 +242,18 @@ def test_perspective_preserves_behind_eye_coordinates_for_clipping():
 
 
 def test_near_plane_aabb_is_visible():
+
     assert aabb_visible(AABB(-1, -1, -0.1, 1, 1, -0.1), Mat4.identity(), 0.1)
 
 
 def test_empty_mesh_and_invalid_indices():
+
     empty = Mesh([])
     assert empty.aabb.is_empty()
     Renderer(4, 4).draw_mesh_shaded(
         Framebuffer(4, 4),
         empty,
-        lambda v, u: None,
+        lambda v, u: (Vec4(0, 0, 0, 1), ()),
         lambda v: 1,
         Uniforms(),
         Camera(Vec3.zero(), Vec3(0, 0, -1)),
@@ -244,6 +261,17 @@ def test_empty_mesh_and_invalid_indices():
     )
     with pytest.raises(ValueError, match="index"):
         Mesh([Vertex(Vec3.zero())], [0, 0, 1])
+
+
+def test_mesh_keeps_integer_index_buffer_and_rejects_other_array_formats():
+
+    indices = array("I", [0, 0, 0])
+    mesh = Mesh([Vertex(Vec3.zero())], indices)
+    assert mesh.indices is indices
+
+    # A signed integer array violates the documented unsigned-I storage contract.
+    with pytest.raises(ValueError, match="typecode"):
+        Mesh(mesh.vertices, array("i", [0, 0, 0]))
 
 
 @pytest.mark.parametrize(
@@ -257,6 +285,7 @@ def test_empty_mesh_and_invalid_indices():
     ],
 )
 def test_invalid_camera_parameters(near, far, fov, scale):
+
     with pytest.raises(ValueError):
         Camera(
             Vec3.zero(),
@@ -269,13 +298,13 @@ def test_invalid_camera_parameters(near, far, fov, scale):
 
 
 def test_target_size_mismatch_rejected():
+
     with pytest.raises(ValueError, match="dimensions"):
-        Renderer(4, 4).draw_ndc_triangle(
-            Framebuffer(8, 8), (0, 0, 0.5), (1, 0, 0.5), (0, 1, 0.5), 1
-        )
+        Renderer(4, 4).draw_ndc_triangle(Framebuffer(8, 8), (0, 0, 0.5), (1, 0, 0.5), (0, 1, 0.5), 1)
 
 
 def test_line_clips_huge_endpoints_and_interpolates_depth():
+
     fb = Framebuffer(8, 8)
     draw_line(fb, -1e9, 2, 0.25, 1e9, 2, 0.75, 0xFFFFFF)
     for x in range(8):
@@ -285,12 +314,16 @@ def test_line_clips_huge_endpoints_and_interpolates_depth():
 
 
 def test_wire_segment_clips_in_view_space():
+
     camera = Camera(Vec3.zero(), Vec3(0, 0, -1), near=1)
-    a, b = _clip_view_segment(Vec4(-1, 0, 1, 1), Vec4(1, 0, -3, 1), camera)
+    segment = _clip_view_segment(Vec4(-1, 0, 1, 1), Vec4(1, 0, -3, 1), camera)
+    assert segment is not None
+    a, b = segment
     assert (a.x, a.z, b.x, b.z) == pytest.approx((0, -1, 1, -3))
 
 
 def test_gradient_top_and_bottom():
+
     fb = Framebuffer(2, 3)
     fill_gradient(fb, 0xFF0000, 0x0000FF)
     assert fb.get(0, 0) == 0xFF0000
@@ -299,6 +332,7 @@ def test_gradient_top_and_bottom():
 
 
 def test_scene_reparenting_and_cycles():
+
     a, b, child = Node(), Node(), Node()
     a.add_child(child)
     b.add_child(child)
@@ -312,6 +346,7 @@ def test_scene_reparenting_and_cycles():
 @pytest.mark.parametrize("offset", [0.0, 0.25, 0.5])
 @pytest.mark.parametrize("reverse", [False, True])
 def test_shared_edges_have_exactly_one_owner(offset, reverse):
+
     corners = [
         (2 + offset, 2 + offset, 0.5, 1),
         (10 + offset, 2 + offset, 0.5, 1),
@@ -325,7 +360,7 @@ def test_shared_edges_have_exactly_one_owner(offset, reverse):
             if reverse:
                 vertices.reverse()
             fb = Framebuffer(16, 16)
-            rasterize_triangle_shaded(fb, *vertices, (), (), (), lambda v: 1)
+            rasterize_triangle_shaded(fb, vertices[0], vertices[1], vertices[2], (), (), (), lambda v: 1)
             for i, color in enumerate(fb.color):
                 ownership[i] += bool(color)
         assert max(ownership) == 1
@@ -333,6 +368,7 @@ def test_shared_edges_have_exactly_one_owner(offset, reverse):
 
 
 def test_singular_normal_matrix_and_cache_invalidation():
+
     u = Uniforms()
     cached = u.normal_matrix
     u.model = Mat4((0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1))
@@ -344,18 +380,16 @@ def test_singular_normal_matrix_and_cache_invalidation():
 
 @pytest.mark.parametrize("value", [0, -1, math.inf, math.nan])
 def test_invalid_point_light_radius(value):
+
     with pytest.raises(ValueError, match="radius"):
         Light(kind="point", radius=value)
 
 
 @pytest.mark.parametrize("projection", ["perspective", "orthographic"])
 def test_flat_and_shaded_pipeline_agree_across_depth_clip_planes(projection):
-    camera = Camera(
-        Vec3.zero(), Vec3(0, 0, -1), projection=projection, near=1, far=5, ortho_scale=2
-    )
-    mesh = Mesh(
-        [Vertex(Vec3(-1, -1, 0.5)), Vertex(Vec3(1, -1, -3)), Vertex(Vec3(0, 1, -7))]
-    )
+
+    camera = Camera(Vec3.zero(), Vec3(0, 0, -1), projection=projection, near=1, far=5, ortho_scale=2)
+    mesh = Mesh([Vertex(Vec3(-1, -1, 0.5)), Vertex(Vec3(1, -1, -3)), Vertex(Vec3(0, 1, -7))])
     flat, shaded = Framebuffer(32, 32), Framebuffer(32, 32)
     renderer = Renderer(32, 32)
     renderer.draw_mesh(flat, mesh, Mat4.identity(), 0xFFFFFF, camera)
@@ -374,6 +408,7 @@ def test_flat_and_shaded_pipeline_agree_across_depth_clip_planes(projection):
 
 
 def test_renderer_preserves_explicit_time_across_repeated_draws():
+
     mesh = Mesh(
         [
             Vertex(Vec3(-0.5, -0.5, -2)),
@@ -385,11 +420,9 @@ def test_renderer_preserves_explicit_time_across_repeated_draws():
     renderer, fb, u = Renderer(16, 16), Framebuffer(16, 16), Uniforms()
     u.time, u.delta_time = 2.5, 0.125
     samples = []
-
     def vertex_shader(vertex, uniforms):
         samples.append((uniforms.time, uniforms.delta_time))
         return uniforms.transform(vertex.pos), ()
-
     root = Node(mesh, Material(vertex_shader, lambda v: 1))
     outputs = []
     for _ in range(3):

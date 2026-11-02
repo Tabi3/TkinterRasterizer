@@ -1,100 +1,97 @@
 # Rasterizer
 
-A small Python 3D rasterizer focused on reverse-Z depth, edge-function triangle
-fills, and lightweight rendering demos.
+A Python software rasterizer with reverse-Z depth, programmable materials, four
+camera projections, and a Tk viewer. The accompanying game has its own
+[TextTwister README](TextTwister/README.md) and
+[game implementation spec](TextTwister/IMPLEMENTATION_SPEC.md).
 
-## Project layout
-
-- `Rasterizer/algebra/` — vectors, matrices, quaternions, and transforms
-- `Rasterizer/geometry/` — mesh data, bounds, and procedural primitives
-- `Rasterizer/rendering/` — renderer, clipping, rasterizer, and framebuffer
-- `Rasterizer/materials/` — materials, textures, and shader factories
-- `Rasterizer/scene/` — scene graph and lights
-- `Rasterizer/display/` — Tk interactive viewer
-- `Rasterizer/demos/` — runnable rendering examples
-- `tests/` — behavior and regression tests
-- `IMPLEMENTATION_SPEC.md` — rendering conventions and contributor contract
-
-The package root keeps the small public API:
+## Small rendering API
 
 ```python
-from Rasterizer import Camera, Object3D, Renderer, Uniforms
+from Rasterizer import Camera, Framebuffer, Material, Node, Renderer, Vec3, make_cube
+
+fb = Framebuffer(640, 360)
+renderer = Renderer(fb.width, fb.height)
+camera = Camera(Vec3(0, 1.5, 5), Vec3.zero())
+scene = Node(make_cube(), Material.gouraud())
+
+renderer.render(fb, scene, camera)
+fb.to_ppm("cube.ppm")
 ```
 
-## Run tests and lint
+Use `renderer.draw(fb, mesh, camera, color=...)` for a flat mesh, or supply
+`material=Material.textured(texture, lit=True)` and an optional transform.
+`render()` draws a scene and prepares its background: an integer is a solid
+color, a color pair is a gradient, and None preserves existing pixels/depth.
+Set `wireframe=True` to draw scene edges.
+
+Lighting and explicit time are in reusable `renderer.uniforms`. Existing
+`draw_mesh`, `draw_mesh_shaded`, `draw_scene`, shader factories and former
+camera/uniform import paths remain supported. Import Viewer from
+`Rasterizer.display.tk_backend`; core imports do not initialize Tk.
+
+## Demos and game
+
+```bash
+python -m Rasterizer.demos.demo_unshaded
+python -m Rasterizer.demos.demo_textured
+python -m Rasterizer.demos.demo_lit_scene
+python -m Rasterizer.demos.demo_projections
+python -m TextTwister
+```
+
+Demos accept `--res 640x360 --scale 2`. The projection example uses 1-4 to select
+perspective/orthographic/Panini/ellipsoid and W for wireframe. See the
+[demo guide](Rasterizer/demos/README.md) and the separate
+[game controls and rules](TextTwister/README.md). Interactive programs require Tk;
+tests and image exports can run headlessly.
+
+## Layout and contracts
+
+- `Rasterizer/data/`: font glyphs, unit-box face bases and shared constants.
+- `Rasterizer/algebra/`: math values and an explicit owned-output transform writer.
+- `Rasterizer/geometry/`, `materials/`, `scene/`: resources and transform hierarchy.
+- `Rasterizer/rendering/`: camera, uniforms, dispatch, fill kernels and framebuffer.
+- `Rasterizer/display/`, `demos/`: window integration and concise runnable examples.
+- `TextTwister/`: independent game rules/controller, static data, UI and persistence.
+
+[IMPLEMENTATION_SPEC.md](IMPLEMENTATION_SPEC.md) defines the numerical and API
+contracts, scratch ownership, bulk pixel operations, and documentation style.
+Ordinary matrix operations retain value behavior. `write_trs()` explicitly reuses
+an owned matrix, and `Framebuffer.blit()` copies color/depth with typed views.
+Bitmap text uses precompiled spans and private cached fill rows.
+
+Perspective uses infinite reverse-Z. Orthographic uses linear reverse depth over
+`Camera.near` to `Camera.far` (default 1000). Nonlinear projections approximate
+curved surfaces with tessellated triangles. Rendering targets must match renderer
+dimensions. Materials honor culling and depth-write flags; shadows are reserved.
+
+Viewer defaults to uncapped scheduling and prints FPS plus frame/render/upscale/
+encode/upload timings approximately once per second. Pass `log_timings=False`
+to disable printing. `background_encode=False` creates a synchronous viewer with
+no worker or mailbox; TextTwister uses this mode. Timing is in elapsed seconds,
+and presentation drops never advance or discard simulation time.
+
+## Validation and performance
 
 ```bash
 python -m pip install -r requirements-dev.txt
 python -m pytest -q
 python -m ruff check .
-python -m ruff format --check .
-```
-
-The code-quality workflow runs Ruff lint and formatting checks on pushes and
-pull requests, plus tests on Windows and Linux with Python 3.12 and 3.14.
-Development tool versions are pinned in `requirements-dev.txt`; editor Ruff
-integrations should use the same version and the repository's `pyproject.toml`.
-CI checks files without rewriting them. To apply formatting locally, run
-`python -m ruff format .`; review fixes from `python -m ruff check --fix .`
-before committing. Do not disable rules just to pass a check.
-
-## Run demos
-
-```bash
-python -m Rasterizer.demos.demo_lit_scene
-python -m Rasterizer.demos.demo_textured
-python -m Rasterizer.demos.demo_projections
-python -m Rasterizer.demos.demo_unshaded
-```
-
-The interactive demos need Tk support in the Python installation. The renderer
-and test suite do not need a display.
-
-## Rendering behavior
-
-Perspective uses infinite reverse-Z depth. Orthographic uses affine attribute
-interpolation and linear reverse-Z depth between `Camera.near` and `Camera.far`
-(default 1000). This corrects older orthographic images and changes their depth
-values. Panini and ellipsoid filled triangles remain approximations; subdivide
-meshes for better curved-projection results.
-
-Scene and instanced draws honor `Material.cull` and `Material.depth_write`.
-Direct shaded draws accept the keyword `depth_write=False`. Lighting supports
-nonuniform model scale and coincident point lights. Textured shaders observe
-in-place pixel edits. `cast_shadow` remains reserved metadata.
-
-Renderer and framebuffer dimensions must match. Empty meshes are valid; invalid
-indices and camera ranges raise explicit errors. Nodes support reparenting and
-reject cycles. See [IMPLEMENTATION_SPEC.md](IMPLEMENTATION_SPEC.md) for contracts.
-
-The Tk viewer reuses bounded buffers, drops frames under backpressure, and
-reports presented FPS. PNG and PPM fallback uploads are supported. Call
-`Viewer.close()` to stop a viewer programmatically.
-
-## Animation and scheduling
-
-The viewer renders without a configured FPS cap by default (`tick_ms=0`). Pass
-`tick_ms=16`, for example, to request an approximately 16 ms start-to-start period;
-render time is included in that period. Rendering and Tk upload costs still
-limit actual throughput.
-
-Frame callbacks receive `(framebuffer, dt)` with delta in seconds, including
-stalls; the first delta is zero. All demos animate from accumulated delta rather
-than frame counts or a process-wide clock. For custom animation, use elapsed
-seconds or `velocity * dt`. Set `Uniforms.time` and `Uniforms.delta_time` explicitly
-for time-aware shaders; rendering never advances either field.
-
-The viewer replaces stale pending frames and presents the newest available
-result. Dropped display frames do not discard animation time. Use
-`Viewer.key_presses()` for ordered discrete input, including repeated taps between
-slow frames, and `is_key_down()` with delta-scaled rates for continuous movement.
-
-## Performance checks
-
-```bash
+python -m basedpyright --warnings
 python -m benchmarks.benchmark_rendering --number 10 --repeat 5
 ```
 
-The benchmark needs no window or third-party packages. It measures triangle
-kernels, a lit sphere, index iteration, and PNG encoding separately. See
-[PERFORMANCE.md](PERFORMANCE.md) for observed improvements and measurement limits.
+CI runs pinned Ruff and basedpyright checks, plus Windows/Linux tests on Python
+3.12/3.14. See [PERFORMANCE.md](PERFORMANCE.md) for observed timings and limits.
+
+Application/benchmark parsing is handwritten; general-purpose parser libraries
+are excluded, with image decoding permitted. Ordinary control flow avoids try
+blocks. Narrow resource handlers are confined to audited `_protected` functions,
+with explicit unprotected alternatives. The game README documents their behavior.
+
+Source follows the Framebuffer layout: statements in a block stay adjacent, one
+blank line separates computation phases, and two separate methods or sections.
+Assignments and declaration rows are grouped and aligned where useful. The
+preferred width is 150 characters. See the root
+[code style specification](IMPLEMENTATION_SPEC.md#documentation-and-code-style).

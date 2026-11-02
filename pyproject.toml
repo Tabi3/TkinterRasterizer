@@ -1,7 +1,22 @@
 [tool.ruff]
-line-length = 88
+line-length = 150
 target-version = "py312"
 
 [tool.ruff.lint]
 extend-select = ["I", "N", "RUF"]
-ignore = ["N999"]
+ignore = ["N999", "E701"]
+
+[tool.ruff.format]
+# Preserve the project's manually aligned computation blocks.
+exclude = ["*.py"]
+
+[tool.ruff.lint.isort]
+lines-after-imports = 2
+
+[tool.basedpyright]
+include = ["Rasterizer", "TextTwister", "tests", "benchmarks"]
+pythonVersion = "3.12"
+typeCheckingMode = "standard"
+reportMissingTypeArgument = "error"
+reportImplicitRelativeImport = "error"
+reportUnnecessaryTypeIgnoreComment = "error"

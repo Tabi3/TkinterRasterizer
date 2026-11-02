@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   ruff:
-    name: Ruff lint and formatting
+    name: Ruff lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -21,7 +21,19 @@ jobs:
           cache-dependency-path: requirements-dev.txt
       - run: python -m pip install -r requirements-dev.txt
       - run: python -m ruff check .
-      - run: python -m ruff format --check .
+
+  types:
+    name: Basedpyright type checking
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - run: python -m pip install -r requirements-dev.txt
+      - run: python -m basedpyright --warnings
 
   tests:
     name: Tests (${{ matrix.os }}, Python ${{ matrix.python }})

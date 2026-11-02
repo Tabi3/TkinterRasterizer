@@ -1,32 +1,38 @@
-"""Rasterizer package root.
+"""Small public API. Spec: IMPLEMENTATION_SPEC.md#api-and-organization.
 
-Spec:
-    Expose the public rendering API for the project while keeping the runtime
-    implementation in purpose-based packages and the examples in the
-    `Rasterizer.demos` package.
-
-Contract:
-    The package root should remain a thin convenience layer that imports the
-    stable, user-facing rendering surface without exposing the internal backend
-    details.
-
-Behavior:
-    Library users can import the renderer from the package root, while demo
-    scripts call the same API through the dedicated example package.
-
-Reference:
-    See IMPLEMENTATION_SPEC.md for the repository architecture, project
-    conventions, and refactor contract that govern this package layout.
+Import Camera, Framebuffer, Material, Mesh, Node and Renderer here. Algebra and
+resources are also re-exported for concise examples. Import Viewer explicitly
+from Rasterizer.display; headless imports do not initialize Tk.
 """
 
+from .algebra.math3d import Mat4, Vec2, Vec3, Vec4
 from .cli import parse_resolution
-from .rendering.renderer import Camera, Object3D, Renderer, Uniforms
+from .geometry.mesh import Mesh, make_cube
+from .materials.material import Material
+from .materials.texture import Texture
+from .rendering.camera import Camera
+from .rendering.framebuffer import Framebuffer
+from .rendering.renderer import Object3D, Renderer
+from .rendering.uniforms import Uniforms
+from .scene.scene import Light, Node
+
 
 __all__ = [
     "Camera",
+    "Framebuffer",
+    "Light",
+    "Mat4",
+    "Material",
+    "Mesh",
+    "Node",
     "Object3D",
     "Renderer",
+    "Texture",
     "Uniforms",
+    "Vec2",
+    "Vec3",
+    "Vec4",
+    "make_cube",
     "parse_resolution",
 ]
 

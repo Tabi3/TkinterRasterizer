@@ -1,54 +1,48 @@
-"""Projection comparison demo.
-
-Spec:
-    This example swaps the active camera projection mode while keeping the same
-    scene graph, shader setup, and public draw API.
-
-Keys:
-    1 / 2 / 3 / 4 = perspective / orthographic / panini / ellipsoid
-    W = toggle wireframe
-    Escape = quit
-
-Reference:
-    IMPLEMENTATION_SPEC.md §2.1, "Math and geometry layer" and §3.3, "Demo
-    layer" explain the public API and projection conventions used here.
-"""
+"""Projection comparison. Spec: IMPLEMENTATION_SPEC.md#api-and-organization."""
 
 import sys
-from array import array
+from pathlib import Path
 
-try:
-    from .common import advance_time, parse_resolution
-except ImportError:  # pragma: no cover - package import fallback
-    try:
-        from common import advance_time, parse_resolution
-    except ImportError:  # pragma: no cover - direct repo launch fallback
-        from Rasterizer.demos.common import advance_time, parse_resolution
 
-from Rasterizer.algebra.math3d import Vec3
-from Rasterizer.algebra.transforms import rotate_x, rotate_y
-from Rasterizer.display.tk_backend import Viewer
-from Rasterizer.geometry.mesh import make_cube
-from Rasterizer.materials.material import Material
-from Rasterizer.materials.shaders import make_gouraud_shader
-from Rasterizer.rendering.renderer import Camera, Renderer, Uniforms
-from Rasterizer.scene.scene import Light, Node
+if __package__ in (None, ""):  # Support direct file execution from any directory.
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-_proj_names = ["perspective", "orthographic", "panini", "ellipsoid"]
+
+from Rasterizer import (
+    Camera,
+    Framebuffer,
+    Light,
+    Material,
+    Node,
+    Renderer,
+    Vec3,
+    make_cube,
+)
+from Rasterizer.algebra.affine import write_trs
+from Rasterizer.data.conventions import PROJECTIONS
+from Rasterizer.demos.common import advance_time, demo_viewer
+
+
+_proj_names = PROJECTIONS
+
 _state = {}
+
 _viewer = None
 
 
-def draw(fb, dt):
+def draw(fb: Framebuffer, dt: float) -> None:
+    """Update owned pose state from elapsed seconds and draw the demo."""
+
+    # Spec: IMPLEMENTATION_SPEC.md#api-and-organization.
+    # Initialize scene resources once; each frame only updates pose/time.
     t = advance_time(_state, dt)
     if "renderer" not in _state:
         _state["renderer"] = Renderer(fb.width, fb.height)
         cube = make_cube(size=2.0, subdivisions=3)
         for v in cube.vertices:
             v.color = 0xE0D0B0
-        mat = Material(*make_gouraud_shader(), name="gouraud")
-        root = Node(name="root")
-        root.add_child(Node(mesh=cube, material=mat, name="cube"))
+        mat = Material.gouraud()
+        root = Node(cube, mat, name="cube")
         _state["root"] = root
         _state["camera"] = Camera(
             Vec3(0, 1.5, 5),
@@ -57,47 +51,35 @@ def draw(fb, dt):
             near=0.1,
             projection="perspective",
         )
-        u = Uniforms()
+        u = _state["renderer"].uniforms
         u.ambient = 0.2
         u.lights = [Light(kind="directional", direction=Vec3(-0.5, -1.0, -0.5))]
         _state["uniforms"] = u
         _state["wireframe"] = False
-
     if _viewer is not None:
         for key in _viewer.key_presses():
             if key in ("1", "2", "3", "4"):
                 name = _proj_names[int(key) - 1]
                 _state["camera"].projection = name
-                _viewer.root.title(f"Rasterizer ? {name} ({fb.width}x{fb.height})")
+                _viewer.root.title(f"Rasterizer - {name} ({fb.width}x{fb.height})")
                 print(f"projection: {name}")
             elif key == "w":
                 _state["wireframe"] = not _state["wireframe"]
                 print(f"wireframe: {_state['wireframe']}")
-
-    _state["root"].children[0].local_transform = rotate_y(t * 0.5) @ rotate_x(t * 0.3)
+    write_trs(_state["root"].local_transform, yaw=t * 0.5, pitch=t * 0.3)
     _state["uniforms"].time = t
     _state["uniforms"].delta_time = dt
-
     renderer = _state["renderer"]
-    renderer.draw_skybox(fb, 0x5070A0, 0x101828)
-
-    if _state["wireframe"]:
-        fb.depth[:] = array("f", [0.0]) * fb.size
-        cs = 12 if _state["camera"].projection in ("panini", "ellipsoid") else 1
-        renderer.draw_scene_wireframe(
-            fb,
-            _state["root"],
-            _state["camera"],
-            _state["uniforms"],
-            color=0x00FF88,
-            curve_segments=cs,
-        )
-    else:
-        renderer.draw_scene(fb, _state["root"], _state["camera"], _state["uniforms"])
+    renderer.render(
+        fb,
+        _state["root"],
+        _state["camera"],
+        background=(0x5070A0, 0x101828),
+        wireframe=_state["wireframe"],
+    )
 
 
 if __name__ == "__main__":
-    w, h, scale = parse_resolution(sys.argv)
-    _viewer = Viewer(w, h, title="...", render_scale=scale)
-    _viewer.set_frame_callback(draw)
+    _viewer = demo_viewer(draw, "Projection comparison")
+
     _viewer.run()

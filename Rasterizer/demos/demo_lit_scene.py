@@ -1,48 +1,40 @@
-"""Scene graph light rig demo.
-
-Spec:
-    This demo exercises the public renderer API with a multi-light Gouraud scene
-    and a skybox background while keeping the example code separate from the
-    engine implementation.
-
-Reference:
-    IMPLEMENTATION_SPEC.md §3.3, "Demo layer" and §2.2, "Rendering and backend
-    layer" describe the intended separation between the public API and the
-    backend pipeline used by this script.
-"""
+"""Multiple lights. Spec: IMPLEMENTATION_SPEC.md#api-and-organization."""
 
 import math
 import sys
+from pathlib import Path
 
-try:
-    from .common import advance_time, parse_resolution
-except ImportError:  # pragma: no cover - package import fallback
-    try:
-        from common import advance_time, parse_resolution
-    except ImportError:  # pragma: no cover - direct repo launch fallback
-        from Rasterizer.demos.common import advance_time, parse_resolution
 
-from Rasterizer.algebra.math3d import Vec3
-from Rasterizer.algebra.transforms import rotate_y, translate
-from Rasterizer.display.tk_backend import Viewer
-from Rasterizer.geometry.mesh import make_cube
-from Rasterizer.materials.material import Material
-from Rasterizer.materials.shaders import make_gouraud_shader
-from Rasterizer.rendering.renderer import Camera, Renderer, Uniforms
-from Rasterizer.scene.scene import Light, Node
+if __package__ in (None, ""):  # Support direct file execution from any directory.
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+
+from Rasterizer import (
+    Camera,
+    Framebuffer,
+    Light,
+    Material,
+    Node,
+    Renderer,
+    Vec3,
+    make_cube,
+)
+from Rasterizer.algebra.affine import write_trs
+from Rasterizer.algebra.transforms import translate
+from Rasterizer.demos.common import advance_time, demo_viewer
+
 
 _state = {}
 
 
-def _build_scene():
-    mat = Material(*make_gouraud_shader(), name="gouraud")
-    root = Node(name="root")
+def _build_scene() -> Node:
 
-    center = make_cube(size=1.4)
+    mat     = Material.gouraud()
+    root    = Node(name="root")
+    center  = make_cube(size=1.4)
     for v in center.vertices:
         v.color = 0xE8D8C8
     root.add_child(Node(mesh=center, material=mat, name="center"))
-
     palette = [0xFF6060, 0x60FF60, 0x6060FF, 0xFFD060]
     for i in range(4):
         angle = (i / 4.0) * 2.0 * math.pi
@@ -62,15 +54,17 @@ def _build_scene():
     return root
 
 
-def draw(fb, dt):
+def draw(fb: Framebuffer, dt: float) -> None:
+    """Update owned pose state from elapsed seconds and draw the demo."""
+
+    # Spec: IMPLEMENTATION_SPEC.md#api-and-organization.
+    # Initialize scene resources once; each frame only updates pose/time.
     t = advance_time(_state, dt)
     if "renderer" not in _state:
         _state["renderer"] = Renderer(fb.width, fb.height)
         _state["root"] = _build_scene()
-        _state["camera"] = Camera(
-            Vec3(0, 2.5, 7), Vec3(0, 0.5, 0), fov_y_deg=55, near=0.1
-        )
-        u = Uniforms()
+        _state["camera"] = Camera(Vec3(0, 2.5, 7), Vec3(0, 0.5, 0), fov_y_deg=55, near=0.1)
+        u = _state["renderer"].uniforms
         u.ambient = 0.15
         u.lights = [
             Light(
@@ -88,18 +82,12 @@ def draw(fb, dt):
             ),
         ]
         _state["uniforms"] = u
-
-    _state["root"].local_transform = rotate_y(t * 0.3)
+    write_trs(_state["root"].local_transform, yaw=t * 0.3)
     _state["uniforms"].time = t
     _state["uniforms"].delta_time = dt
-
     renderer = _state["renderer"]
-    renderer.draw_skybox(fb, 0x5070A0, 0x00AAFF)
-    renderer.draw_scene(fb, _state["root"], _state["camera"], _state["uniforms"])
+    renderer.render(fb, _state["root"], _state["camera"], background=(0x5070A0, 0x00AAFF))
 
 
 if __name__ == "__main__":
-    w, h, scale = parse_resolution(sys.argv)
-    _viewer = Viewer(w, h, title="...", render_scale=scale)
-    _viewer.set_frame_callback(draw)
-    _viewer.run()
+    demo_viewer(draw, "Light rig").run()

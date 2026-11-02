@@ -30,42 +30,62 @@ from .math3d import Mat3, Mat4, cross, dot, normalize
 # ---------------------------------------------------------------------------
 # Quaternion — rotation authoring only. Bake to Mat4 before the render loop.
 # ---------------------------------------------------------------------------
+
+
 class Quat:
     __slots__ = ("w", "x", "y", "z")
 
     def __init__(self, x=0.0, y=0.0, z=0.0, w=1.0):
+
         if not (isinstance(x, (int, float)) and not isinstance(x, bool)):
             raise TypeError("x must be a real numeric value")
+
         if not (isinstance(y, (int, float)) and not isinstance(y, bool)):
             raise TypeError("y must be a real numeric value")
+
         if not (isinstance(z, (int, float)) and not isinstance(z, bool)):
             raise TypeError("z must be a real numeric value")
+
         if not (isinstance(w, (int, float)) and not isinstance(w, bool)):
             raise TypeError("w must be a real numeric value")
+
         self.x = float(x)
+
         self.y = float(y)
+
         self.z = float(z)
+
         self.w = float(w)
 
     # ----- constructors ---------------------------------------------------
     @classmethod
     def identity(cls):
+
         return cls(0.0, 0.0, 0.0, 1.0)
 
     @classmethod
     def from_axis_angle(cls, axis, angle_rad):
+
         a = normalize(axis)
+
         half = angle_rad * 0.5
+
         s = sin(half)
+
         return cls(a.x * s, a.y * s, a.z * s, cos(half))
 
     @classmethod
     def from_euler(cls, rx=0.0, ry=0.0, rz=0.0):
         """Intrinsic X then Y then Z (matches Blender's default XYZ Euler)."""
+
         hx, hy, hz = rx * 0.5, ry * 0.5, rz * 0.5
+
         cx, sx = cos(hx), sin(hx)
+
         cy, sy = cos(hy), sin(hy)
+
         cz, sz = cos(hz), sin(hz)
+
         return cls(
             sx * cy * cz - cx * sy * sz,
             cx * sy * cz + sx * cy * sz,
@@ -74,32 +94,46 @@ class Quat:
         )
 
     # ----- algebra --------------------------------------------------------
+
     def __mul__(self, o):
+
         if isinstance(o, Quat):
             a, b = self, o
+
             return Quat(
                 a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y,
                 a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
                 a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w,
                 a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z,
             )
+
         return NotImplemented
 
     def conjugate(self):
+
         return Quat(-self.x, -self.y, -self.z, self.w)
 
     def normalize(self):
+
         l = sqrt(self.x * self.x + self.y * self.y + self.z * self.z + self.w * self.w)
+
         if l == 0.0:
             return Quat.identity()
+
         inv = 1.0 / l
+
         return Quat(self.x * inv, self.y * inv, self.z * inv, self.w * inv)
 
     def to_mat4(self):
+
         x, y, z, w = self.x, self.y, self.z, self.w
+
         xx, yy, zz = x * x, y * y, z * z
+
         xy, xz, yz = x * y, x * z, y * z
+
         wx, wy, wz = w * x, w * y, w * z
+
         return Mat4(
             (
                 1 - 2 * (yy + zz),
@@ -123,14 +157,20 @@ class Quat:
 
     def to_mat3(self):
         """Upper-left 3x3 — normal matrix before inverse-transpose."""
+
         m = self.to_mat4().data
+
         return Mat3((m[0], m[1], m[2], m[4], m[5], m[6], m[8], m[9], m[10]))
 
     def slerp(self, o, t):
+
         d = self.x * o.x + self.y * o.y + self.z * o.z + self.w * o.w
+
         if d < 0.0:
             o = Quat(-o.x, -o.y, -o.z, -o.w)
+
             d = -d
+
         if d > 0.9995:
             return Quat(
                 self.x + (o.x - self.x) * t,
@@ -138,10 +178,15 @@ class Quat:
                 self.z + (o.z - self.z) * t,
                 self.w + (o.w - self.w) * t,
             ).normalize()
+
         theta = math.acos(d)
+
         st = sin(theta)
+
         a = sin((1.0 - t) * theta) / st
+
         b = sin(t * theta) / st
+
         return Quat(
             self.x * a + o.x * b,
             self.y * a + o.y * b,
@@ -150,17 +195,22 @@ class Quat:
         ).normalize()
 
     def __repr__(self):
+
         return f"Quat({self.x!r}, {self.y!r}, {self.z!r}, {self.w!r})"
 
 
 # ---------------------------------------------------------------------------
 # Basic transforms
 # ---------------------------------------------------------------------------
+
+
 def identity():
+
     return Mat4.identity()
 
 
 def translate(v):
+
     return Mat4.from_rows(
         (1, 0, 0, v.x),
         (0, 1, 0, v.y),
@@ -170,6 +220,7 @@ def translate(v):
 
 
 def scale(v):
+
     return Mat4.from_rows(
         (v.x, 0, 0, 0),
         (0, v.y, 0, 0),
@@ -179,7 +230,9 @@ def scale(v):
 
 
 def rotate_x(rad):
+
     c, s = cos(rad), sin(rad)
+
     return Mat4.from_rows(
         (1, 0, 0, 0),
         (0, c, -s, 0),
@@ -189,7 +242,9 @@ def rotate_x(rad):
 
 
 def rotate_y(rad):
+
     c, s = cos(rad), sin(rad)
+
     return Mat4.from_rows(
         (c, 0, s, 0),
         (0, 1, 0, 0),
@@ -199,7 +254,9 @@ def rotate_y(rad):
 
 
 def rotate_z(rad):
+
     c, s = cos(rad), sin(rad)
+
     return Mat4.from_rows(
         (c, -s, 0, 0),
         (s, c, 0, 0),
@@ -209,26 +266,34 @@ def rotate_z(rad):
 
 
 def rotate_axis(axis, rad):
+
     return Quat.from_axis_angle(axis, rad).to_mat4()
 
 
 def compose_trs(pos, rot, scale_vec):
     """T * R * S. rot may be a Quat or a Mat4."""
+
     rotation_matrix = rot.to_mat4() if isinstance(rot, Quat) else rot
+
     return translate(pos) @ rotation_matrix @ scale(scale_vec)
 
 
 # ---------------------------------------------------------------------------
 # Camera / view
 # ---------------------------------------------------------------------------
+
+
 def look_at(eye, target, up):
     """Right-handed view matrix. Camera looks down -Z in view space.
 
     Matches Blender's camera convention (forward = -Z) and Godot's
     Node3D.look_at() convention (right-handed, up defaults to +Y).
     """
+
     f = normalize(target - eye)  # world-space forward
+
     r = normalize(cross(f, up))  # right
+
     u = cross(r, f)  # corrected up
 
     # View space basis:  x=right, y=up, z=-forward  (camera looks down -Z)
@@ -266,12 +331,16 @@ def perspective_reverse_z(fov_y_rad, aspect, near, far=None):
     Raises:
         ValueError on any nonsensical argument.
     """
+
     if not (near > 0.0):
         raise ValueError(f"near must be > 0 (got {near})")
+
     if far is not None and not (far > near):
         raise ValueError(f"far ({far}) must be > near ({near})")
+
     if not (aspect > 0.0):
         raise ValueError(f"aspect must be > 0 (got {aspect})")
+
     if not (0.0 < fov_y_rad < math.pi):
         raise ValueError(f"fov_y_rad ({fov_y_rad}) must be in (0, pi)")
 
@@ -279,6 +348,7 @@ def perspective_reverse_z(fov_y_rad, aspect, near, far=None):
 
     if far is None:
         # Infinite-far reverse-Z.
+
         return Mat4.from_rows(
             (f / aspect, 0, 0, 0),
             (0, f, 0, 0),
@@ -288,7 +358,9 @@ def perspective_reverse_z(fov_y_rad, aspect, near, far=None):
 
     # Finite-far reverse-Z.
     a = near / (far - near)  # -> 0 as far -> inf
+
     b = near * far / (far - near)  # -> near as far -> inf
+
     return Mat4.from_rows(
         (f / aspect, 0, 0, 0),
         (0, f, 0, 0),
@@ -299,14 +371,18 @@ def perspective_reverse_z(fov_y_rad, aspect, near, far=None):
 
 def ndc_perspective(x, y, z_view, f, aspect):
     """Standard perspective."""
+
     w = -z_view
+
     if w <= 1e-9:
         return (0.0, 0.0)
+
     return (f * x / (aspect * w), f * y / w)
 
 
 def ndc_orthographic(x, y, z_view, half_h, aspect):
     """Orthographic. half_h = half vertical extent in world units."""
+
     return (x / (half_h * aspect), y / half_h)
 
 
@@ -319,16 +395,25 @@ def ndc_panini(x, y, z_view, f, aspect):
 
     References: T. Sharpless, "The Panini Projection" (2014).
     """
+
     w = -z_view
+
     if w <= 1e-9:
         return (0.0, 0.0)
+
     r = math.sqrt(x * x + w * w)
+
     s = math.sqrt(x * x + y * y + w * w)
+
     if r < 1e-9 or s < 1e-9:
         return (0.0, 0.0)
+
     phi = math.atan2(x, w)  # horizontal angle
+
     theta = math.asin(min(1.0, r / s))  # radial angle
+
     norm = (2.0 / math.pi) * theta  # 0..1; keeps center perspective
+
     return (f * math.sin(phi) * norm / aspect, f * (y / r) * norm)
 
 
@@ -338,21 +423,35 @@ def ndc_ellipsoid(x, y, z_view, f, aspect, strength=0.5):
     Any value in (0, 1) gives a smooth ellipsoid-flavoured projection
     with tunable peripheral compression.
     """
+
     w = -z_view
+
     if w <= 1e-9:
         return (0.0, 0.0)
+
     px = f * x / (aspect * w)
+
     py = f * y / w
+
     r = math.sqrt(x * x + w * w)
+
     s = math.sqrt(x * x + y * y + w * w)
+
     if r < 1e-9 or s < 1e-9:
         return (px, py)
+
     phi = math.atan2(x, w)
+
     theta = math.asin(min(1.0, r / s))
+
     norm = (2.0 / math.pi) * theta
+
     nx = f * math.sin(phi) * norm / aspect
+
     ny = f * (y / r) * norm
+
     k = 1.0 - strength
+
     return (px * k + nx * strength, py * k + ny * strength)
 
 
@@ -362,6 +461,7 @@ def viewport(x, y, w, h):
     Z passes through unchanged (reverse-Z: NDC z is already [0,1];
     near=1, far=0 — no remapping).
     """
+
     return Mat4.from_rows(
         (w * 0.5, 0, 0, x + w * 0.5),
         (0, -h * 0.5, 0, y + h * 0.5),
@@ -389,6 +489,7 @@ def blender_zup_to_yup():
         directly, or apply rotate_y(math.pi) afterwards (which also
         flips X — usually undesirable, hence the caveat).
     """
+
     return Mat4.from_rows(
         (1, 0, 0, 0),
         (0, 0, 1, 0),
@@ -399,4 +500,5 @@ def blender_zup_to_yup():
 
 def yup_to_blender_zup():
     """Inverse of blender_zup_to_yup().  Rotation matrix -> transpose."""
+
     return blender_zup_to_yup().transpose()

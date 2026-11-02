@@ -39,6 +39,143 @@ The stage contracts are:
 - Rasterizer: fills pixels satisfying edge tests, interpolates v by
   perspective correction, calls fs(v) → 0xRRGGBB.
 
+## API and organization
+
+The package root exports the ordinary application types: Camera, Framebuffer,
+Renderer, Material, Mesh, Node, Light, Texture, vectors and Mat4. Viewer stays in
+`Rasterizer.display` so headless imports do not pull in windowing code.
+
+The convenience API has two operations:
+
+- `Renderer.draw(fb, mesh, camera, *, material=None, transform=None, color=...,
+  uniforms=None)` draws one mesh without clearing or advancing time. A missing
+  material selects the flat-color path. A material supplies shaders and flags.
+- `Renderer.render(fb, root, camera, *, background=..., uniforms=None,
+  wireframe=False, wireframe_color=...)` prepares a background and draws a scene.
+  An integer clears to a solid color, a pair draws a gradient, and None preserves
+  existing pixels/depth. Wireframe uses the established projection-aware edge path.
+
+`renderer.uniforms` is persistent default state, initialized with one directional
+light. Callers own its lighting and timing. Explicit uniforms override it. The
+low-level draw_mesh/draw_mesh_shaded/draw_scene APIs remain available unchanged.
+`Material.gouraud()` and `Material.textured(texture, lit=...)` wrap the built-in
+shader factories, which remain supported for custom/material-building code.
+
+Camera and projection policy live in `rendering/camera.py`; reusable uniforms
+live in `rendering/uniforms.py`. The former imports from rendering.renderer remain
+compatible. The dispatch module owns orchestration, not camera/state definitions.
+Static fonts, box-face bases, projections and defaults live in `Rasterizer/data/`.
+Those scalar tables never become shared mutable mesh/vector instances.
+
+Demos use these public entry points, initialize resources once, reuse poses, and
+share `demo_viewer()` for CLI/window setup. They still support direct-file and
+module execution. The game keeps its own user README and implementation spec.
+
+## Allocation and mutable scratch
+
+Reused scratch is explicitly owned and must not leak across calls or sessions.
+Renderer keeps flat-path clip-vector capacity; vectors are overwritten for active
+vertices, and stale capacity is never traversed by mesh indices. The shaded
+vertex-shader callback contract still returns independent results; do not alias
+shader output to a single scratch vector.
+
+`write_trs(output, ...)` computes T * Ry * Rx * Rz * S directly into an owned Mat4.
+It reuses the matrix object but replaces its data with a tuple snapshot. Ordinary
+matrix operators retain their existing value behavior, and Uniforms normal-cache
+comparison still detects pose changes. One private matrix per animated object
+avoids constructing chains of temporary matrices and vectors each frame.
+
+Game cameras, viewports, meshes and static transforms are cached by the owning
+view. Mutable widget records and lists are reused; answer sets and archived run
+metadata remain snapshots. Prefer measured changes to blanket mutability or
+replacing every loop with a comprehension.
+
+## Bulk pixel operations
+
+Framebuffer colors and depths remain packed arrays. `Framebuffer.blit(source,x,y)`
+uses typed memoryview slice assignment for clipped C-backed color/depth copies.
+Ordinary distinct-buffer copies allocate views, not per-row pixel arrays. Alias
+copies snapshot source arrays first so overlapping moves do not corrupt later rows.
+
+Font glyph rows live in data/font5x7.py. The drawing module compiles contiguous
+spans once and copies cached solid array rows rather than painting individual
+bits with new rectangles. Cached rows are private read-only sources; writable
+framebuffers never alias them. The row cache is bounded at 128 entries.
+
+The unit-box face table is scalar data. Mesh builders create their own normal
+vectors, avoiding shared mutable constants. Unit-box orientations/UV winding and
+existing output are preserved when this table is used by engine and game meshes.
+
+## Documentation and code style
+
+Docstrings and annotations define purpose, inputs/outputs, ownership, and failure
+behavior. Comments divide dense computations into phases, introduce the next
+block, and cite the relevant heading in this specification. Example:
+
+```python
+# Spec: IMPLEMENTATION_SPEC.md#allocation-and-mutable-scratch.
+# Only private flat-path vertices are overwritten; shader outputs stay independent.
+```
+
+Source layout uses the `Framebuffer` module as its reference, with a preferred
+line length of 150. A blank line separates related computation phases; two
+blank lines separate methods, section dividers, and top-level declarations:
+
+```python
+class Framebuffer:
+    __slots__ = (
+        "_clear_color",
+        "_color_template",
+        "_depth_template",
+        "color",
+        "depth",
+        "height",
+        "size",
+        "width",
+    )
+
+    def __init__(self, width: int, height: int) -> None:
+        if not isinstance(width, int):
+            raise TypeError("width must be int")
+        if width <= 0:
+            raise ValueError("width must be positive")
+
+        self.width = int(width)
+        self.height = int(height)
+        self.size = self.width * self.height
+
+        # Spec: IMPLEMENTATION_SPEC.md#documentation-and-code-style.
+        # Build reusable storage once; frame operations use C-backed slices.
+        self.color = array("I", [0]) * self.size
+        self.depth = array("f", [0.0]) * self.size
+```
+
+- Keep statements in one computation block adjacent. Separate related phases
+  with one empty line; separate methods, sections, and top-level blocks with
+  two empty lines. Within a related assignment group, align operators.
+  A declaration block such as `__slots__` or a tuple/list may use grouped rows;
+  align its rows to the data shape rather than forcing one item per line.
+- Put one empty line before `elif` and `else` branches when they contain a
+  separate computation block; keep decorators attached to declarations.
+- Put short conditional bodies on one line when the result stays readable.
+  Align the conditions and colons of compact `if`/`elif` chains. Long conditions
+  or bodies remain multiline; do not introduce semicolon-separated statements.
+- Lay out long tuples, lists, slots and function parameters in grouped rows,
+  like NumPy array declarations. Matrix rows should follow their dimensions
+  where they fit the preferred width. This is a layout convention, not a NumPy dependency.
+- Use section dividers (`# ----- name -----`) between major method groups. Keep
+  related helpers together so a section reads as one computation block.
+- A short guard may be written as `if   (condition): statement`; align the
+  condition and colon across an `if`/`elif` chain. Use ordinary multiline blocks
+  when the condition or statement is long, nested, or has more than one action.
+- Keep docstrings attached to their declarations. Computation comments provide
+  a preamble and a specification reference, rather than repeating assignments.
+
+Ruff lint remains enabled. Ruff formatting is the baseline for spacing, while
+the configured line length and small alignment exceptions preserve readability.
+CI runs lint, types and tests after formatting changes are reviewed.
+Static data belongs in dedicated data modules, not giant algorithm-file literals.
+
 ## Numerical conventions
 
 - Column-vector math: (M · v)_i = Σ_j M[i, j] · v_j. Mat4 storage is
@@ -224,7 +361,7 @@ so nonuniform scale is supported. Singular transforms produce zero normals
 
 ## Repository layout
 
-Source files are grouped by their job, not under a catch-all math directory:
+Source files are grouped by their job, with static tables separated from algorithms:
 
 - `Rasterizer/algebra/` — vectors, matrices, quaternions, and coordinate transforms
 - `Rasterizer/geometry/` — vertices, meshes, bounds, and procedural primitives
@@ -269,8 +406,8 @@ intentional breaking change is documented.
   have a clear caller and a runnable demo when they are user-facing.
 - Keep overloads and type annotations aligned with the actual supported input
   and output shapes.
-- Ruff is configured in `pyproject.toml`. Run `python -m ruff check .` and
-  `python -m ruff format --check .` before changing behavior or imports.
+- Ruff is configured in `pyproject.toml`. Run `python -m ruff check .` before
+  changing behavior or imports. Preserve the manual block layout described above.
 
 ## Render state and input contracts
 
@@ -320,24 +457,68 @@ measurement limits, and the repeatable headless benchmark command.
 
 ## Viewer ownership and lifecycle
 
-Tk renders, submits at most one color-only snapshot per tick, and presents
-completed frames. Three reusable snapshots bound allocations. The encoder owns
-a snapshot until encoding completes or fails, then returns it through a queue.
-Depth is neither copied nor consumed by presentation.
+`Viewer(..., background_encode=True, resource_mode="protected")` preserves the
+asynchronous demo path. A `FrameMailbox` owns three reusable snapshots, one pending
+snapshot, and one ready result. A condition lock protects buffer availability and
+ownership together. Submission replaces pending pixels under that lock; encoding
+owns its snapshot exclusively until release. Publishing replaces a stale ready
+result. No Queue.Empty/Full exceptions or racy empty-then-get checks are used.
 
-The worker reuses one private upscale target, keeps at most two ready frames,
-and replaces the oldest result when full. Submission replaces obsolete queued
-snapshots when capacity is exhausted, reclaiming only buffers that are not being
-encoded. The encoder skips obsolete pending snapshots before starting work; Tk
-presents the newest ready result. Intermediate frames may be discarded without
-losing elapsed simulation time. Tk operations and fallback-file writes stay on
-the main thread. The worker performs no Tk calls.
+The worker reuses one private upscale target and performs no Tk calls. Protected
+encoding returns buffers in finally even when it fails. The unprotected worker
+propagates failures and does not promise to return an in-flight buffer after an
+error. Closing sets the stop predicate and wakes waiters; join waits up to one
+second. Both close paths are idempotent on normal execution.
 
-PNG is preferred; if initialization selects PPM fallback, subsequent frames
-continue using it at display resolution. `Viewer.close()` is idempotent, signals
-the worker, waits up to one second, removes the fallback file, and destroys Tk.
-`run()` closes resources in `finally`. FPS counts successful presentations;
-render, upscale, encode, and upload timings measure separate stages.
+`background_encode=False` allocates no mailbox and creates no encoder thread.
+Encoding, optional upscaling, and upload run on the Tk thread. TextTwister uses
+this path. PNG is preferred on Tk 8.6+; PPM uploads use in-memory image bytes with
+no temporary display files. Protected PNG failures select PPM; unprotected uploads
+use the selected format and propagate failures. Upload errors do not increment
+presented FPS. Timing telemetry is exposed through Viewer fields. With `log_timings=True`
+(the default), a once-per-second console report includes successful-upload FPS,
+whole-tick work time, render, upscale, encoding, upload, resolution, and mode.
+Frame/FPS windows end after upload work, before scheduling. Values use time-based
+smoothing; asynchronous stage averages need not correspond to the same frame.
+
+Protected window initialization and run-loop wrappers clean up partial windows
+or failed runs. Unprotected counterparts perform cleanup only on the success
+path. See the resource policy below for the deliberately different guarantees.
+
+## Parser and resource policy
+
+Authored runtime and benchmark code uses no general-purpose format parser:
+JSON, CSV, TOML/YAML, argparse, regex parsing, pickle, AST parsing, and eval-based
+formats are excluded. String helpers are allowed. Validate ASCII decimal text
+before numeric conversion. Image decoders and development-tool internals are
+outside this restriction. The benchmark retains --number/--repeat through the
+shared handwritten option reader; malformed/missing/duplicate options are rejected.
+The existing resolution parser retains its API and validates numeric syntax;
+viewer construction checks render-scale divisibility.
+
+Ordinary rendering, game, input, math and mailbox operations contain no try blocks.
+The normal-matrix cache checks the determinant before inverse computation.
+Active try blocks are confined to audited functions ending in `_protected`:
+
+- Viewer window initialization, encoding resource ownership, image presentation,
+  run lifecycle, and close operations in `display/tk_backend.py`.
+- Score/dictionary file reads, atomic writes, and temporary-file cleanup in
+  `TextTwister/storage.py`.
+
+Protected mode is the default and may use narrow exception handlers and finally
+for resource cleanup. Corresponding `_unprotected` functions share validation
+and normal algorithms but contain no authored try blocks. Their failures propagate
+and can leave windows, temporary files, or buffer state unfinished. Context
+managers still close files. Commented protected reference patterns accompany
+unprotected functions. No raw-memory access is introduced by either mode.
+
+## TextTwister integration
+
+The game's independent behavior, data layout, scoring, dictionary selection,
+resource policy and UI contracts live in
+[TextTwister/IMPLEMENTATION_SPEC.md](TextTwister/IMPLEMENTATION_SPEC.md).
+The game uses the renderer's public draw API and a synchronous Viewer. Keep
+renderer math here and game rules there rather than duplicating specifications.
 
 ## Time, scheduling, and input
 
@@ -371,12 +552,29 @@ render, upscale, encode, and upload timings measure separate stages.
 
 ## Validation
 
-`.github/workflows/quality.yml` enforces lint and formatting on pushes and pull
-requests. Its test matrix covers Windows/Linux and Python 3.12/3.14. Install the
+`.github/workflows/quality.yml` enforces lint and basedpyright on
+pushes and pull requests. Its test matrix covers Windows/Linux and Python
+3.12/3.14. Install the
 pinned tools from `requirements-dev.txt` locally so editor and CI diagnostics
 agree. Update tool pins deliberately and run all checks when upgrading them.
-CI must check formatting without modifying files; local automatic fixes require
-diff review. Preserve the configured rules rather than adding blanket ignores.
+CI preserves manual formatting; local automatic lint fixes require diff review.
+The compact-statement exceptions are intentional; other lint rules remain enabled.
+
+Basedpyright checks `Rasterizer/`, `TextTwister/`, `tests/`, and `benchmarks/` in standard mode
+targeting Python 3.12. Missing generic arguments, implicit relative imports, and
+unnecessary type-ignore comments are errors. The CI command uses `--warnings`
+so new warnings also fail. Standard mode is the typing baseline for this partly
+annotated codebase; it does not require complete annotation of every helper.
+Do not skip unannotated functions or exclude tests to pass this check. Intentional
+invalid-input tests may use a documented, diagnostic-specific ignore on the call
+that violates a static contract; production paths should be fixed directly.
+
+Screen vertices are four-float tuples and varyings are float tuples. Specialized
+raster kernels initialize scalar slots before branching; only active components
+are read, and their gradients are computed once per triangle. Optional results
+and file paths must be checked before use. Mesh index arrays must use unsigned
+`I` storage; other array formats are rejected. Demos bootstrap the package root
+for direct file execution and then use explicit package imports.
 
 Run the full regression and style checks from the repository root:
 
@@ -384,7 +582,7 @@ Run the full regression and style checks from the repository root:
 python -m pip install -r requirements-dev.txt
 python -m pytest -q
 python -m ruff check .
-python -m ruff format --check .
+python -m basedpyright --warnings
 ```
 
 Regression tests include analytical pixel-center values, deterministic random
@@ -398,3 +596,8 @@ selection under a blocked encoder, without wall-clock speed assertions.
 
 Interactive demos need Tk support. Headless tests mock Tk and do not establish
 visual quality or validate the platform decoder.
+
+The handwritten source-policy test audits authored parser imports and protected
+try-block placement. Game tests cover repeated letters, signature bags, stage
+progression, exact deadline boundaries and long stalls, score arithmetic,
+persistence corruption/IO failure, both resource modes, and framebuffer screens.

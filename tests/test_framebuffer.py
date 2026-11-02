@@ -11,6 +11,7 @@ from Rasterizer.rendering.framebuffer import Framebuffer
 
 
 def test_framebuffer_construction():
+
     for bad in [(0, 10), (10, 0), (-1, 5)]:
         with pytest.raises(ValueError):
             Framebuffer(*bad)
@@ -19,6 +20,7 @@ def test_framebuffer_construction():
 
 
 def test_framebuffer_clear():
+
     fb = Framebuffer(4, 3)
     fb.clear(0xFF0000)
     assert all(c == 0xFF0000 for c in fb.color)
@@ -26,12 +28,14 @@ def test_framebuffer_clear():
 
 
 def test_framebuffer_put_get():
+
     fb = Framebuffer(4, 3)
     fb.put(1, 2, 0xAABBCC)
     assert fb.get(1, 2) == 0xAABBCC
 
 
 def test_framebuffer_out_of_bounds():
+
     fb = Framebuffer(4, 3)
     fb.put(-1, 0, 0xFFFFFF)
     fb.put(4, 0, 0xFFFFFF)
@@ -40,6 +44,7 @@ def test_framebuffer_out_of_bounds():
 
 
 def test_framebuffer_depth_test_reverse_z():
+
     fb = Framebuffer(4, 4)
     fb.clear(0)
     assert fb.put_depthtested(1, 1, 0x00FF00, 0.5)
@@ -49,6 +54,7 @@ def test_framebuffer_depth_test_reverse_z():
 
 
 def test_framebuffer_depth_strict():
+
     fb = Framebuffer(4, 4)
     fb.clear(0)
     fb.put_depthtested(1, 1, 0x00FF00, 0.5)
@@ -57,7 +63,6 @@ def test_framebuffer_depth_strict():
 
 def test_framebuffer_ppm_b64():
     import base64
-
     fb = Framebuffer(2, 1)
     fb.clear(0)
     fb.put(0, 0, 0xFF0000)
@@ -73,7 +78,6 @@ def test_framebuffer_png_b64():
     import base64
     import struct
     import zlib
-
     fb = Framebuffer(2, 1)
     fb.clear(0)
     fb.put(0, 0, 0xFF0000)
@@ -93,11 +97,11 @@ def test_framebuffer_png_b64():
 
 def test_upscale_nearest_2x():
     from array import array
-
     src = Framebuffer(2, 2)
     src.color = array("I", [0x110000, 0x220000, 0x330000, 0x440000])
     dst = Framebuffer(4, 4)
     src.upscale_nearest(dst)
+
     # Each src pixel fills a 2x2 block
     for x, y in [(0, 0), (1, 0), (0, 1), (1, 1)]:
         assert dst.get(x, y) == 0x110000
@@ -111,7 +115,6 @@ def test_upscale_nearest_2x():
 
 def test_upscale_nearest_3x():
     from array import array
-
     src = Framebuffer(2, 1)
     src.color = array("I", [0xAA0000, 0xBB0000])
     dst = Framebuffer(6, 3)
@@ -124,6 +127,7 @@ def test_upscale_nearest_3x():
 
 
 def test_upscale_nearest_rejects_non_integer():
+
     src = Framebuffer(3, 2)
     dst = Framebuffer(10, 10)
     with pytest.raises(ValueError):
@@ -132,7 +136,6 @@ def test_upscale_nearest_rejects_non_integer():
 
 def test_upscale_nearest_identity():
     from array import array
-
     src = Framebuffer(4, 3)
     src.color = array("I", range(12))
     dst = Framebuffer(4, 3)

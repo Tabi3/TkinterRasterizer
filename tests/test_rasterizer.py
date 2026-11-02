@@ -14,10 +14,12 @@ from Rasterizer.rendering.rasterizer import (
 
 
 def _count_nonzero(fb):
+
     return sum(1 for c in fb.color if c != 0)
 
 
 def test_rasterize_basic_triangle():
+
     fb = Framebuffer(20, 20)
     fb.clear(0)
     rasterize_triangle(
@@ -31,15 +33,15 @@ def test_rasterize_basic_triangle():
 
 
 def test_rasterize_degenerate():
+
     fb = Framebuffer(10, 10)
     fb.clear(0)
-    rasterize_triangle(
-        fb, (5.0, 5.0, 0.5, 1.0), (5.0, 5.0, 0.5, 1.0), (5.0, 5.0, 0.5, 1.0), 0xFF0000
-    )
+    rasterize_triangle(fb, (5.0, 5.0, 0.5, 1.0), (5.0, 5.0, 0.5, 1.0), (5.0, 5.0, 0.5, 1.0), 0xFF0000)
     assert _count_nonzero(fb) == 0
 
 
 def test_rasterize_offscreen():
+
     fb = Framebuffer(10, 10)
     fb.clear(0)
     rasterize_triangle(
@@ -53,6 +55,7 @@ def test_rasterize_offscreen():
 
 
 def test_rasterize_shaded_triangle_coverage():
+
     fb = Framebuffer(64, 64)
     fb.clear(0)
     rasterize_triangle_shaded(
@@ -77,6 +80,7 @@ def test_rasterize_shaded_triangle_coverage():
 
 
 def test_rasterize_shaded_shared_edge():
+
     fb = Framebuffer(64, 64)
     fb.clear(0)
     fs = lambda v: 0xFFFFFF
@@ -106,6 +110,7 @@ def test_rasterize_shaded_shared_edge():
 
 
 def test_rasterize_shaded_depth_test():
+
     fb = Framebuffer(16, 16)
     fb.clear(0)
     fs = lambda v: 0xFFFFFF
@@ -134,14 +139,13 @@ def test_rasterize_shaded_depth_test():
 
 
 def test_rasterize_shaded_varying_interpolation():
+
     fb = Framebuffer(16, 16)
     fb.clear(0)
     captured = []
-
     def fs(v):
         captured.append(v)
         return 0xFFFFFF
-
     rasterize_triangle_shaded(
         fb,
         (0.0, 0.0, 0.5, 1.0),
@@ -153,12 +157,14 @@ def test_rasterize_shaded_varying_interpolation():
         fs,
     )
     assert len(captured) > 50
+
     # u+v should be roughly in [0, 1] for interior pixels
     for u, v in captured:
         assert -0.01 <= u <= 1.01 and -0.01 <= v <= 1.01
 
 
 def test_draw_line_basic():
+
     fb = Framebuffer(16, 16)
     fb.clear(0)
     draw_line(fb, 0.0, 0.0, 0.9, 15.0, 15.0, 0.9, 0xFFFFFF)
@@ -168,6 +174,7 @@ def test_draw_line_basic():
 
 
 def test_draw_line_depth_test():
+
     fb = Framebuffer(16, 16)
     fb.clear(0)
     draw_line(fb, 0.0, 0.0, 0.5, 15.0, 15.0, 0.5, 0xFFFFFF)

@@ -1,3 +1,7 @@
 /**/*.pyc
 /**/__pycache__
 /**/.ruff_cache
+
+/TextTwister/leaderboard.txt
+/TextTwister/.leaderboard-*.tmp
+/.pytest_cache/

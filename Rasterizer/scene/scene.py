@@ -52,28 +52,28 @@ class Light:
         intensity: float = 1.0,
         radius: float = 10.0,
     ) -> None:
+
         if kind not in {"directional", "point"}:
             raise ValueError(f"unsupported light kind: {kind!r}")
+
         if not (isinstance(color, tuple) and len(color) == 3):
             raise TypeError("color must be a 3-tuple of floats")
-        if not (
-            isinstance(intensity, (int, float)) and not isinstance(intensity, bool)
-        ):
+
+        if not (isinstance(intensity, (int, float)) and not isinstance(intensity, bool)):
             raise TypeError("intensity must be a real numeric value")
+
         if not (isinstance(radius, (int, float)) and not isinstance(radius, bool)):
             raise TypeError("radius must be a real numeric value")
+
         if not math.isfinite(intensity) or intensity < 0:
             raise ValueError("intensity must be finite and nonnegative")
+
         if not math.isfinite(radius) or radius <= 0:
             raise ValueError("radius must be finite and positive")
-        if any(
-            not isinstance(c, (int, float))
-            or isinstance(c, bool)
-            or not math.isfinite(c)
-            or c < 0
-            for c in color
-        ):
+
+        if any(not isinstance(c, (int, float)) or isinstance(c, bool) or not math.isfinite(c) or c < 0 for c in color):
             raise ValueError("light color channels must be finite and nonnegative")
+
         self.kind = kind
         self.position = position or Vec3.zero()
         self.direction = (direction or Vec3(0, -1, 0)).normalize()
@@ -109,49 +109,56 @@ class Node:
         local_transform: Mat4 | None = None,
         name: str = "node",
     ) -> None:
+
         if not isinstance(name, str):
             raise TypeError("node name must be a string")
+
         self.name = name
         self.mesh = mesh
         self.material = material
-        self.local_transform = (
-            local_transform if local_transform is not None else Mat4.identity()
-        )
+        self.local_transform = local_transform if local_transform is not None else Mat4.identity()
         self.world_transform = Mat4.identity()
         self.children: list[Node] = []
         self.parent: Node | None = None
 
     def add_child(self, child: Node) -> Node:
-        if not isinstance(child, Node):
-            raise TypeError("child must be a Node")
+
+        if not isinstance(child, Node): raise TypeError("child must be a Node")
+
         ancestor = self
+
         while ancestor is not None:
-            if ancestor is child:
-                raise ValueError("scene graph cannot contain cycles")
+            if ancestor is child: raise ValueError("scene graph cannot contain cycles")
+
             ancestor = ancestor.parent
-        if child.parent is self:
-            return child
-        if child.parent is not None:
-            child.parent.children.remove(child)
+
+        if child.parent is self: return child
+        if child.parent is not None: child.parent.children.remove(child)
+
         child.parent = self
+
         self.children.append(child)
+
         return child
 
     def traverse(self, parent_world: Mat4, visitor: Callable[[Node], None]) -> None:
         """Pre-order traversal. Sets self.world_transform, then calls
         visitor(self), then recurses into children.
         """
+
         self.world_transform = parent_world @ self.local_transform
+
         visitor(self)
-        for child in self.children:
-            child.traverse(self.world_transform, visitor)
+
+        for child in self.children: child.traverse(self.world_transform, visitor)
 
     def world_aabb(self):
         """AABB in world space. Requires world_transform to be current
         (only valid inside a traversal visitor, or after a full traversal).
         """
-        if self.mesh is None:
-            raise ValueError("Mesh is None")
+
+        if self.mesh is None: raise ValueError("Mesh is None")
+
         return self.mesh.aabb.transform(self.world_transform)
 
 
@@ -166,13 +173,15 @@ def lights_affecting_aabb(world_aabb, lights: Sequence[Light]) -> list[Light]:
         world_aabb may be empty; result is a list (possibly the same list
         reference if no light could be rejected).
     """
+
     out: list[Light] = []
+
     for light in lights:
-        if not light.enabled:
-            continue
-        if light.kind == "directional":
-            out.append(light)
+        if not light.enabled: continue
+
+        if light.kind == "directional": out.append(light)
+
         else:
-            if world_aabb.expand(light.radius).contains_point(light.position):
-                out.append(light)
+            if world_aabb.expand(light.radius).contains_point(light.position): out.append(light)
+
     return out

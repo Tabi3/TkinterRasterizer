@@ -1,70 +1,55 @@
-"""Textured lit cube demo.
-
-Spec:
-    This demo covers the textured-lighting path that consumes the renderer's
-    public API and shader callbacks while staying outside the engine internals.
-
-Reference:
-    IMPLEMENTATION_SPEC.md §2.2, "Rendering and backend layer" and §3.3,
-    "Demo layer" define the role of this script in the repo structure.
-"""
+"""Textured cube. Spec: IMPLEMENTATION_SPEC.md#api-and-organization."""
 
 import sys
+from pathlib import Path
 
-try:
-    from .common import advance_time, parse_resolution
-except ImportError:  # pragma: no cover - package import fallback
-    try:
-        from common import advance_time, parse_resolution
-    except ImportError:  # pragma: no cover - direct repo launch fallback
-        from Rasterizer.demos.common import advance_time, parse_resolution
 
-from Rasterizer.algebra.math3d import Vec3
-from Rasterizer.algebra.transforms import rotate_x, rotate_y
-from Rasterizer.display.tk_backend import Viewer
-from Rasterizer.geometry.mesh import make_cube
-from Rasterizer.materials.material import Material
-from Rasterizer.materials.shaders import make_textured_lit_shader
-from Rasterizer.materials.texture import Texture
-from Rasterizer.rendering.renderer import Camera, Renderer, Uniforms
-from Rasterizer.scene.scene import Light, Node
+if __package__ in (None, ""):  # Support direct file execution from any directory.
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+
+from Rasterizer import (
+    Camera,
+    Framebuffer,
+    Light,
+    Material,
+    Node,
+    Renderer,
+    Texture,
+    Vec3,
+    make_cube,
+)
+from Rasterizer.algebra.affine import write_trs
+from Rasterizer.demos.common import advance_time, demo_viewer
+
 
 _state = {}
 
 
-def draw(fb, dt):
+def draw(fb: Framebuffer, dt: float) -> None:
+    """Update owned pose state from elapsed seconds and draw the demo."""
+
+    # Spec: IMPLEMENTATION_SPEC.md#api-and-organization.
+    # Initialize scene resources once; each frame only updates pose/time.
     t = advance_time(_state, dt)
     if "renderer" not in _state:
         _state["renderer"] = Renderer(fb.width, fb.height)
-        tex = Texture.checkerboard(
-            size=128, cells=8, color_a=0xFF4040, color_b=0x4040FF
-        )
+        tex = Texture.checkerboard(size=128, cells=8, color_a=0xFF4040, color_b=0x4040FF)
         cube = make_cube(size=2.0)
-        mat = Material(*make_textured_lit_shader(tex), name="textured_lit")
-        root = Node(name="root")
-        root.add_child(Node(mesh=cube, material=mat, name="cube"))
+        mat = Material.textured(tex, lit=True)
+        root = Node(cube, mat, name="cube")
         _state["root"] = root
-        _state["camera"] = Camera(
-            Vec3(0, 1.5, 5), Vec3(0, 0, 0), fov_y_deg=55, near=0.1
-        )
-        u = Uniforms()
+        _state["camera"] = Camera(Vec3(0, 1.5, 5), Vec3(0, 0, 0), fov_y_deg=55, near=0.1)
+        u = _state["renderer"].uniforms
         u.ambient = 0.2
-        u.lights = [
-            Light(kind="directional", direction=Vec3(-0.5, -1.0, -0.5), intensity=1.0)
-        ]
+        u.lights = [Light(kind="directional", direction=Vec3(-0.5, -1.0, -0.5), intensity=1.0)]
         _state["uniforms"] = u
-
-    _state["root"].children[0].local_transform = rotate_y(t * 0.6) @ rotate_x(t * 0.3)
+    write_trs(_state["root"].local_transform, yaw=t * 0.6, pitch=t * 0.3)
     _state["uniforms"].time = t
     _state["uniforms"].delta_time = dt
-
     renderer = _state["renderer"]
-    renderer.draw_skybox(fb, 0x5060A0, 0x203040)
-    renderer.draw_scene(fb, _state["root"], _state["camera"], _state["uniforms"])
+    renderer.render(fb, _state["root"], _state["camera"], background=(0x5060A0, 0x203040))
 
 
 if __name__ == "__main__":
-    w, h, scale = parse_resolution(sys.argv)
-    _viewer = Viewer(w, h, title=f"Rasterizer — Textured ({w}x{h})", render_scale=scale)
-    _viewer.set_frame_callback(draw)
-    _viewer.run()
+    demo_viewer(draw, "Textured cube").run()
