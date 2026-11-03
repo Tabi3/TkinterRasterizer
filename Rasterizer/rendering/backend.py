@@ -85,15 +85,10 @@ def clip_near_shaded(verts, near, *, orthographic=False):
 
 
 def cull_and_raster(fb, vp, n0, n1, n2, color, cull=True):
-    # Reference: IMPLEMENTATION_SPEC.md#numerical-conventions
+    """Cull and rasterize trusted renderer data without repeating API checks."""
 
-    if not (hasattr(fb, "width") and hasattr(fb, "height") and hasattr(fb, "color") and hasattr(fb, "depth")):
-        raise TypeError("framebuffer must provide width/height/color/depth")
-
-    if not (isinstance(color, int) and not isinstance(color, bool)):
-        raise TypeError("color must be an integer pixel value")
-
-    if not isinstance(cull, bool): raise TypeError("cull must be a boolean")
+    # Reference: IMPLEMENTATION_SPEC.md#numerical-conventions.
+    # Renderer.draw has already validated the framebuffer, color and flags.
 
     screen_vertex_0 = vp @ Vec4(n0[0], n0[1], n0[2], 1.0)
     screen_vertex_1 = vp @ Vec4(n1[0], n1[1], n1[2], 1.0)
@@ -131,11 +126,7 @@ def aabb_visible(world_aabb, view_matrix, near):
         bounds of the transformed geometry, never smaller).
     """
 
-    if not hasattr(world_aabb, "transform") : raise TypeError("world_aabb must be an AABB-like object")
-
-    if not (isinstance(near, (int, float)) and not isinstance(near, bool)) :
-        raise TypeError("near must be numeric")
-
+    # Renderer.render supplies a validated AABB, view matrix and camera near.
     view_aabb = world_aabb.transform(view_matrix)
 
     return view_aabb.min_z <= -near
@@ -162,13 +153,8 @@ def fill_gradient(fb, color_top, color_bottom):
         color_top, color_bottom: 0xRRGGBB.
     """
 
+    # Renderer.render validates the framebuffer and packed colors once.
     from array import array
-
-    if not (hasattr(fb, "width") and hasattr(fb, "height") and hasattr(fb, "color") and hasattr(fb, "depth")):
-        raise TypeError("framebuffer must provide width/height/color/depth")
-
-    if not (isinstance(color_top, int) and isinstance(color_bottom, int)):
-        raise TypeError("color_top and color_bottom must be integers")
 
     w = fb.width
     h = fb.height

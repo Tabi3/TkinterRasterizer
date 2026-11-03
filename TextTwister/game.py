@@ -102,22 +102,18 @@ class Game:
     def start(self) -> None:
         """Reset the session and seed its first deadline from the absolute clock."""
 
-        self.stage = self.words = self.bonus = self.carryover_ns = 0
+        self.stage      = self.words = self.bonus = self.carryover_ns = 0
+        self.last_stage = None
 
         self.picker = PuzzlePicker(self.index, self.rng)
-
         self.active = True
-
         self.puzzle = None
-
-        self.last_stage = None
 
         self._new_stage(self.clock(), 0)
 
     def _new_stage(self, started_ns: int, carry_ns: int) -> None:
 
         self._archive_stage()
-
         self.stage += 1
 
         # Spec: TextTwister/IMPLEMENTATION_SPEC.md#game-rules.
@@ -126,17 +122,13 @@ class Game:
 
         length = RACK_LENGTHS[tier]
 
-        self.puzzle = self.picker.pick(length, stage=self.stage)
-
-        self.rack = self.puzzle.rack
-
-        self.found = set()
-
+        self.message    = "Find a full-rack word to unlock Next"
+        self.puzzle     = self.picker.pick(length, stage=self.stage)
+        self.rack       = self.puzzle.rack
+        self.found      = set()
         self.full_found = 0
 
         self.deadline_ns = started_ns + STAGE_TIME + carry_ns
-
-        self.message = "Find a full-rack word to unlock Next"
 
     def update(self, now_ns: int | None = None) -> bool:
         """Return whether expiration changed stages or ended the run."""
@@ -150,12 +142,10 @@ class Game:
         while self.active and now >= self.deadline_ns:
             changed = True
 
-            if self.qualified:
-                self._new_stage(self.deadline_ns, 0)
+            if self.qualified: self._new_stage(self.deadline_ns, 0)
 
             else:
                 self.end()
-
                 self.message = "Time is up"
 
         return changed
@@ -172,8 +162,7 @@ class Game:
 
         now = self.clock()
 
-        if self.update(now) or not self.active:
-            return "expired"
+        if self.update(now) or not self.active: return "expired"
 
         # Dictionary membership and per-stage duplicate checks precede scoring.
         word = raw.strip().lower()
@@ -185,18 +174,14 @@ class Game:
 
         if word in self.found:
             self.message = "Already found"
-
             return "duplicate"
 
         # First full-rack answer qualifies; subsequent anagrams add a bonus.
         self.found.add(word)
-
         self.words += 1
 
         if len(word) == len(self.rack):
-            if self.full_found:
-                self.bonus += 1
-
+            if self.full_found: self.bonus += 1
             self.full_found += 1
 
         self.message = "Anagram bonus +1" if len(word) == len(self.rack) and self.full_found > 1 else "Word accepted"
@@ -214,7 +199,6 @@ class Game:
         remaining = self.remaining_ns(now)
 
         self.carryover_ns += remaining
-
         self._new_stage(now, remaining)
 
         return True
@@ -222,13 +206,10 @@ class Game:
     def shuffle(self) -> None:
         """Shuffle visible letters while preserving answers and the intended word."""
 
-        if self.update() or not self.active:
-            return
+        if self.update() or not self.active: return
 
         letters = list(self.rack)
-
         self.rng.shuffle(letters)
-
         shuffled = "".join(letters)
 
         self.rack = shuffled if shuffled != self.rack else self.rack[1:] + self.rack[:1]
@@ -241,7 +222,5 @@ class Game:
     def end(self) -> None:
         """Archive the current answer once and mark the session inactive."""
 
-        if self.active:
-            self._archive_stage()
-
+        if self.active: self._archive_stage()
         self.active = False
